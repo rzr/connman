@@ -5,7 +5,7 @@ Release:    100
 Group:      System/Networking
 License:    GPLv2
 URL:        http://connman.net/
-Source0:    http://www.kernel.org/pub/linux/network/connman/connman-%{version}.tar.bz2
+Source0:    %{name}-%{version}.tar.bz2
 Source1:    settings
 Patch0:     0001-iptables-Avoid-NULL-pointer-dereference-in-table_cle.patch
 Requires:   dbus
