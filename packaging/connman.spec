@@ -7,12 +7,10 @@ License:    GPLv2
 URL:        http://connman.net/
 Source0:    %{name}-%{version}.tar.bz2
 Source1:    settings
-Patch0:     0001-iptables-Avoid-NULL-pointer-dereference-in-table_cle.patch
 Requires:   dbus
 Requires:   wpa_supplicant >= 0.7.1
 Requires:   bluez
 Requires:   ofono
-Requires:   ntp
 Requires:   systemd
 Requires(post):   systemd 
 Requires(preun):  systemd
@@ -28,6 +26,7 @@ BuildRequires:  pkgconfig(libudev) >= 145
 ##BuildRequires:  openconnect
 ##BuildRequires:  openvpn
 BuildRequires:  iptables-devel
+BuildRequires:  pkgconfig(gnutls)
 
 
 %description
@@ -69,8 +68,6 @@ Scripts for testing Connman and its functionality
 
 %prep
 %setup -q -n %{name}-%{version}
-%patch0 -p1
-./bootstrap
 
 %build
 %configure --disable-static \
@@ -81,9 +78,6 @@ Scripts for testing Connman and its functionality
     --enable-loopback=builtin \
     --enable-dnsproxy=builtin \
     --enable-portal=builtin \
-    --enable-meego=builtin \
-    --enable-ntpd=builtin \
-    --with-ntpd=/usr/sbin/ntpd \
     --enable-threads \
     --enable-test \
     --with-systemdunitdir=/%{_lib}/systemd/system
