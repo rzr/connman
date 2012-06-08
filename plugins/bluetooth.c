@@ -2,7 +2,7 @@
  *
  *  Connection Manager
  *
- *  Copyright (C) 2007-2010  Intel Corporation. All rights reserved.
+ *  Copyright (C) 2007-2012  Intel Corporation. All rights reserved.
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 2 as
@@ -446,7 +446,7 @@ static void network_properties_reply(DBusPendingCall *call, void *user_data)
 
 	connman_network_set_group(network, ident);
 
-	g_hash_table_insert(bluetooth_networks, g_strdup(path), network);
+	g_hash_table_replace(bluetooth_networks, g_strdup(path), network);
 
 done:
 	dbus_message_unref(reply);

@@ -2,7 +2,7 @@
  *
  *  Connection Manager
  *
- *  Copyright (C) 2007-2010  Intel Corporation. All rights reserved.
+ *  Copyright (C) 2007-2012  Intel Corporation. All rights reserved.
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 2 as
@@ -316,7 +316,7 @@ int connman_resolver_append(const char *interface, const char *domain,
 
 	DBG("interface %s domain %s server %s", interface, domain, server);
 
-	if (server == NULL)
+	if (server == NULL && domain == NULL)
 		return -EINVAL;
 
 	for (list = entry_list; list; list = list->next) {
@@ -456,32 +456,6 @@ int connman_resolver_remove_all(const char *interface)
 }
 
 /**
- * connman_resolver_append_public_server:
- * @server: server address
- *
- * Append public resolver server address to current list
- */
-int connman_resolver_append_public_server(const char *server)
-{
-	DBG("server %s", server);
-
-	return append_resolver(NULL, NULL, server, 0, RESOLVER_FLAG_PUBLIC);
-}
-
-/**
- * connman_resolver_remove_public_server:
- * @server: server address
- *
- * Remove public resolver server address to current list
- */
-int connman_resolver_remove_public_server(const char *server)
-{
-	DBG("server %s", server);
-
-	return connman_resolver_remove(NULL, NULL, server);
-}
-
-/**
  * connman_resolver_flush:
  *
  * Flush pending resolver requests
@@ -494,8 +468,62 @@ void connman_resolver_flush(void)
 	return;
 }
 
+int __connman_resolver_redo_servers(const char *interface)
+{
+	GSList *list;
+
+	if (dnsproxy_enabled == FALSE)
+		return 0;
+
+	DBG("interface %s", interface);
+
+	if (interface == NULL)
+		return -EINVAL;
+
+	for (list = entry_list; list; list = list->next) {
+		struct entry_data *entry = list->data;
+
+		if (entry->timeout == 0 ||
+				g_strcmp0(entry->interface, interface) != 0)
+			continue;
+
+		/*
+		 * We remove the server, and then re-create so that it will
+		 * use proper source addresses when sending DNS queries.
+		 */
+		__connman_dnsproxy_remove(entry->interface, entry->domain,
+					entry->server);
+
+		__connman_dnsproxy_append(entry->interface, entry->domain,
+					entry->server);
+	}
+
+	return 0;
+}
+
+static void free_entry(gpointer data)
+{
+	struct entry_data *entry = data;
+	g_free(entry->interface);
+	g_free(entry->domain);
+	g_free(entry->server);
+	g_free(entry);
+}
+
+static void free_resolvfile(gpointer data)
+{
+	struct resolvfile_entry *entry = data;
+	g_free(entry->interface);
+	g_free(entry->domain);
+	g_free(entry->server);
+	g_free(entry);
+}
+
 int __connman_resolver_init(connman_bool_t dnsproxy)
 {
+	int i;
+	char **ns;
+
 	DBG("dnsproxy %d", dnsproxy);
 
 	if (dnsproxy == FALSE)
@@ -508,6 +536,12 @@ int __connman_resolver_init(connman_bool_t dnsproxy)
 
 	dnsproxy_enabled = TRUE;
 
+	ns = connman_setting_get_string_list("FallbackNameservers");
+	for (i = 0; ns != NULL && ns[i] != NULL; i += 1) {
+		DBG("server %s", ns[i]);
+		append_resolver(NULL, NULL, ns[i], 0, RESOLVER_FLAG_PUBLIC);
+	}
+
 	return 0;
 }
 
@@ -517,4 +551,18 @@ void __connman_resolver_cleanup(void)
 
 	if (dnsproxy_enabled == TRUE)
 		__connman_dnsproxy_cleanup();
+	else {
+		GList *list;
+		GSList *slist;
+
+		for (list = resolvfile_list; list; list = g_list_next(list))
+			free_resolvfile(list->data);
+		g_list_free(resolvfile_list);
+		resolvfile_list = NULL;
+
+		for (slist = entry_list; slist; slist = g_slist_next(slist))
+			free_entry(slist->data);
+		g_slist_free(entry_list);
+		entry_list = NULL;
+	}
 }

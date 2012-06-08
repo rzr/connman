@@ -2,7 +2,7 @@
  *
  *  Connection Manager
  *
- *  Copyright (C) 2007-2010  Intel Corporation. All rights reserved.
+ *  Copyright (C) 2007-2012  Intel Corporation. All rights reserved.
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 2 as
@@ -420,7 +420,7 @@ int __connman_timezone_init(void)
 	dirname = g_path_get_dirname(ETC_LOCALTIME);
 
 	wd = inotify_add_watch(fd, dirname, IN_DONT_FOLLOW |
-						IN_MODIFY | IN_MOVED_TO);
+						IN_CLOSE_WRITE | IN_MOVED_TO);
 
 	g_free(dirname);
 

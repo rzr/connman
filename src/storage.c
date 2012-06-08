@@ -2,7 +2,7 @@
  *
  *  Connection Manager
  *
- *  Copyright (C) 2007-2010  Intel Corporation. All rights reserved.
+ *  Copyright (C) 2007-2012  Intel Corporation. All rights reserved.
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 2 as
@@ -68,7 +68,7 @@ static void storage_save(GKeyFile *keyfile, char *pathname)
 
 	if (!g_file_set_contents(pathname, data, length, &error)) {
 		DBG("Failed to store information: %s", error->message);
-		g_free(error);
+		g_error_free(error);
 	}
 
 	g_free(data);
@@ -328,6 +328,55 @@ void __connman_storage_save_provider(GKeyFile *keyfile, const char *identifier)
 	g_free(pathname);
 }
 
+gchar **__connman_storage_get_providers(void)
+{
+	GSList *list = NULL;
+	int num = 0, i = 0;
+	struct dirent *d;
+	gchar *str;
+	DIR *dir;
+	struct stat buf;
+	int ret;
+	char **providers;
+	GSList *iter;
+
+	dir = opendir(STORAGEDIR);
+	if (dir == NULL)
+		return NULL;
+
+	while ((d = readdir(dir))) {
+		if (strcmp(d->d_name, ".") == 0 ||
+				strcmp(d->d_name, "..") == 0 ||
+				strncmp(d->d_name, "provider_", 9) != 0)
+			continue;
+
+		if (d->d_type == DT_DIR) {
+			str = g_strdup_printf("%s/%s/settings", STORAGEDIR,
+					d->d_name);
+			ret = stat(str, &buf);
+			g_free(str);
+			if (ret < 0)
+				continue;
+			list = g_slist_prepend(list, g_strdup(d->d_name));
+			num += 1;
+		}
+	}
+
+	closedir(dir);
+
+	providers = g_try_new0(char *, num + 1);
+	for (iter = list; iter != NULL; iter = g_slist_next(iter)) {
+		if (providers != NULL)
+			providers[i] = iter->data;
+		else
+			g_free(iter->data);
+		i += 1;
+	}
+	g_slist_free(list);
+
+	return providers;
+}
+
 /*
  * This function migrates keys from default.profile to settings file.
  * This can be removed once the migration is over.
@@ -351,34 +400,14 @@ void __connman_storage_migrate()
 	if(pathname == NULL)
 		return;
 
+	/* If default.profile exists, create new settings file */
+	keyfile_def = storage_load(pathname);
+	if (keyfile_def == NULL)
+		goto done;
+
 	/* Copy global settings from default.profile to settings. */
 	keyfile = g_key_file_new();
 
-	/* If default.profile doesn't exists, create settings with defaults. */
-	keyfile_def = storage_load(pathname);
-	if (keyfile_def == NULL) {
-		g_key_file_set_boolean(keyfile, "global",
-					"OfflineMode", FALSE);
-
-		g_key_file_set_boolean(keyfile, "WiFi",
-					"Enable", FALSE);
-
-		g_key_file_set_boolean(keyfile, "Bluetooth",
-					"Enable", FALSE);
-
-		g_key_file_set_boolean(keyfile, "Wired",
-					"Enable", FALSE);
-
-		g_key_file_set_boolean(keyfile, "3G",
-					"Enable", FALSE);
-
-		g_key_file_set_boolean(keyfile, "WiMAX",
-					"Enable", FALSE);
-
-		goto done;
-	}
-
-	/* offline mode */
 	val = g_key_file_get_boolean(keyfile_def, "global",
 					"OfflineMode", &error);
 	if (error != NULL) {
@@ -389,7 +418,6 @@ void __connman_storage_migrate()
 	g_key_file_set_boolean(keyfile, "global",
 					"OfflineMode", val);
 
-	/* wifi */
 	val = g_key_file_get_boolean(keyfile_def, "WiFi",
 					"Enable", &error);
 	if (error != NULL) {
@@ -400,7 +428,6 @@ void __connman_storage_migrate()
 	g_key_file_set_boolean(keyfile, "WiFi",
 					"Enable", val);
 
-	/* bluetooth */
 	val = g_key_file_get_boolean(keyfile_def, "Bluetooth",
 					"Enable", &error);
 	if (error != NULL) {
@@ -411,7 +438,6 @@ void __connman_storage_migrate()
 	g_key_file_set_boolean(keyfile, "Bluetooth",
 					"Enable", val);
 
-	/* wired */
 	val = g_key_file_get_boolean(keyfile_def, "Wired",
 					"Enable", &error);
 	if (error != NULL) {
@@ -422,18 +448,16 @@ void __connman_storage_migrate()
 	g_key_file_set_boolean(keyfile, "Wired",
 					"Enable", val);
 
-	/* 3G */
-	val = g_key_file_get_boolean(keyfile_def, "3G",
+	val = g_key_file_get_boolean(keyfile_def, "Cellular",
 					"Enable", &error);
 	if (error != NULL) {
 		g_clear_error(&error);
 		val = FALSE;
 	}
 
-	g_key_file_set_boolean(keyfile, "3G",
+	g_key_file_set_boolean(keyfile, "Cellular",
 					"Enable", val);
 
-	/* WiMAX */
 	val = g_key_file_get_boolean(keyfile_def, "WiMAX",
 					"Enable", &error);
 	if (error != NULL) {
@@ -444,13 +468,12 @@ void __connman_storage_migrate()
 	g_key_file_set_boolean(keyfile, "WiMAX",
 					"Enable", val);
 
-done:
 	__connman_storage_save_global(keyfile);
 
 	g_key_file_free(keyfile);
 
-	if (keyfile_def)
-		g_key_file_free(keyfile_def);
+	g_key_file_free(keyfile_def);
 
+done:
 	g_free(pathname);
 }

@@ -2,7 +2,7 @@
  *
  *  Connection Manager
  *
- *  Copyright (C) 2007-2010  Intel Corporation. All rights reserved.
+ *  Copyright (C) 2007-2012  Intel Corporation. All rights reserved.
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 2 as
@@ -33,19 +33,24 @@
 #include <getopt.h>
 #include <sys/stat.h>
 #include <net/if.h>
+#include <netdb.h>
 
 #include <gdbus.h>
-
-#ifdef HAVE_CAPNG
-#include <cap-ng.h>
-#endif
 
 #include "connman.h"
 
 static struct {
 	connman_bool_t bg_scan;
+	char **pref_timeservers;
+	unsigned int *auto_connect;
+	unsigned int *preferred_techs;
+	char **fallback_nameservers;
 } connman_settings  = {
 	.bg_scan = TRUE,
+	.pref_timeservers = NULL,
+	.auto_connect = NULL,
+	.preferred_techs = NULL,
+	.fallback_nameservers = NULL,
 };
 
 static GKeyFile *load_config(const char *file)
@@ -71,13 +76,80 @@ static GKeyFile *load_config(const char *file)
 	return keyfile;
 }
 
+static uint *parse_service_types(char **str_list, gsize len)
+{
+	unsigned int *type_list;
+	int i, j;
+	enum connman_service_type type;
+
+	type_list = g_try_new0(unsigned int, len + 1);
+	if (type_list == NULL)
+		return NULL;
+
+	i = 0;
+	j = 0;
+	while (str_list[i] != NULL)
+	{
+		type = __connman_service_string2type(str_list[i]);
+
+		if (type != CONNMAN_SERVICE_TYPE_UNKNOWN) {
+			type_list[j] = type;
+			j += 1;
+		}
+		i += 1;
+	}
+
+	return type_list;
+}
+
+static char **parse_fallback_nameservers(char **nameservers, gsize len)
+{
+	char **servers;
+	int i, j;
+	struct addrinfo hints;
+	struct addrinfo *addr;
+
+	servers = g_try_new0(char *, len + 1);
+	if (servers == NULL)
+		return NULL;
+
+	i = 0;
+	j = 0;
+	while (nameservers[i] != NULL) {
+		memset(&hints, 0, sizeof(struct addrinfo));
+		hints.ai_flags = AI_NUMERICHOST;
+		addr = NULL;
+		if (getaddrinfo(nameservers[i], NULL, &hints, &addr) == 0) {
+			servers[j] = g_strdup(nameservers[i]);
+			j += 1;
+		}
+
+		freeaddrinfo(addr);
+		i += 1;
+	}
+
+	return servers;
+}
+
 static void parse_config(GKeyFile *config)
 {
 	GError *error = NULL;
 	gboolean boolean;
+	char **timeservers;
+	char **str_list;
+	gsize len;
+	char *default_auto_connect[] = {
+		"wifi",
+		"ethernet",
+		"cellular",
+		NULL
+	};
 
-	if (config == NULL)
+	if (config == NULL) {
+		connman_settings.auto_connect =
+			parse_service_types(default_auto_connect, 3);
 		return;
+	}
 
 	DBG("parsing main.conf");
 
@@ -85,6 +157,49 @@ static void parse_config(GKeyFile *config)
 						"BackgroundScanning", &error);
 	if (error == NULL)
 		connman_settings.bg_scan = boolean;
+
+	g_clear_error(&error);
+
+	timeservers = g_key_file_get_string_list(config, "General",
+						"FallbackTimeservers", NULL, &error);
+	if (error == NULL)
+		connman_settings.pref_timeservers = timeservers;
+
+	g_clear_error(&error);
+
+	str_list = g_key_file_get_string_list(config, "General",
+			"DefaultAutoConnectTechnologies", &len, &error);
+
+	if (error == NULL)
+		connman_settings.auto_connect =
+			parse_service_types(str_list, len);
+	else
+		connman_settings.auto_connect =
+			parse_service_types(default_auto_connect, 3);
+
+	g_strfreev(str_list);
+
+	g_clear_error(&error);
+
+	str_list = g_key_file_get_string_list(config, "General",
+			"PreferredTechnologies", &len, &error);
+
+	if (error == NULL)
+		connman_settings.preferred_techs =
+			parse_service_types(str_list, len);
+
+	g_strfreev(str_list);
+
+	g_clear_error(&error);
+
+	str_list = g_key_file_get_string_list(config, "General",
+			"FallbackNameservers", &len, &error);
+
+	if (error == NULL)
+		connman_settings.fallback_nameservers =
+			parse_fallback_nameservers(str_list, len);
+
+	g_strfreev(str_list);
 
 	g_clear_error(&error);
 }
@@ -237,6 +352,28 @@ connman_bool_t connman_setting_get_bool(const char *key)
 	return FALSE;
 }
 
+char **connman_setting_get_string_list(const char *key)
+{
+	if (g_str_equal(key, "FallbackTimeservers") == TRUE)
+		return connman_settings.pref_timeservers;
+
+	if (g_str_equal(key, "FallbackNameservers") == TRUE)
+		return connman_settings.fallback_nameservers;
+
+	return NULL;
+}
+
+unsigned int *connman_setting_get_uint_list(const char *key)
+{
+	if (g_str_equal(key, "DefaultAutoConnectTechnologies") == TRUE)
+		return connman_settings.auto_connect;
+
+	if (g_str_equal(key, "PreferredTechnologies") == TRUE)
+		return connman_settings.preferred_techs;
+
+	return NULL;
+}
+
 int main(int argc, char *argv[])
 {
 	GOptionContext *context;
@@ -245,10 +382,6 @@ int main(int argc, char *argv[])
 	DBusError err;
 	GKeyFile *config;
 	guint signal;
-
-#ifdef HAVE_CAPNG
-	/* Drop capabilities */
-#endif
 
 #ifdef NEED_THREADS
 	if (g_thread_supported() == FALSE)
@@ -325,8 +458,9 @@ int main(int argc, char *argv[])
 	__connman_dbus_init(conn);
 
 	config = load_config(CONFIGDIR "/main.conf");
-
 	parse_config(config);
+	if (config != NULL)
+		g_key_file_free(config);
 
 	__connman_storage_migrate();
 	__connman_technology_init();
@@ -337,7 +471,9 @@ int main(int argc, char *argv[])
 	__connman_device_init(option_device, option_nodevice);
 
 	__connman_agent_init();
+	__connman_ippool_init();
 	__connman_iptables_init();
+	__connman_nat_init();
 	__connman_tethering_init();
 	__connman_counter_init();
 	__connman_manager_init();
@@ -359,6 +495,7 @@ int main(int argc, char *argv[])
 
 	__connman_rtnl_start();
 	__connman_dhcp_init();
+	__connman_dhcpv6_init();
 	__connman_wpad_init();
 	__connman_wispr_init();
 	__connman_rfkill_init();
@@ -375,6 +512,7 @@ int main(int argc, char *argv[])
 	__connman_rfkill_cleanup();
 	__connman_wispr_cleanup();
 	__connman_wpad_cleanup();
+	__connman_dhcpv6_cleanup();
 	__connman_dhcp_cleanup();
 	__connman_provider_cleanup();
 	__connman_plugin_cleanup();
@@ -394,7 +532,9 @@ int main(int argc, char *argv[])
 	__connman_counter_cleanup();
 	__connman_agent_cleanup();
 	__connman_tethering_cleanup();
+	__connman_nat_cleanup();
 	__connman_iptables_cleanup();
+	__connman_ippool_cleanup();
 	__connman_device_cleanup();
 	__connman_network_cleanup();
 	__connman_service_cleanup();
@@ -410,8 +550,12 @@ int main(int argc, char *argv[])
 
 	g_main_loop_unref(main_loop);
 
-	if (config)
-		g_key_file_free(config);
+	if (connman_settings.pref_timeservers != NULL)
+		g_strfreev(connman_settings.pref_timeservers);
+
+	g_free(connman_settings.auto_connect);
+	g_free(connman_settings.preferred_techs);
+	g_strfreev(connman_settings.fallback_nameservers);
 
 	g_free(option_debug);
 

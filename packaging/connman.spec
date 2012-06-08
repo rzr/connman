@@ -1,7 +1,7 @@
 Name:       connman
 Summary:    Connection Manager
-Version:    0.78.2
-Release:    100
+Version:    1.0
+Release:    1
 Group:      System/Networking
 License:    GPLv2
 URL:        http://connman.net/

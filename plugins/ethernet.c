@@ -2,7 +2,7 @@
  *
  *  Connection Manager
  *
- *  Copyright (C) 2007-2010  Intel Corporation. All rights reserved.
+ *  Copyright (C) 2007-2012  Intel Corporation. All rights reserved.
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 2 as
@@ -63,12 +63,16 @@ static int cable_connect(struct connman_network *network)
 {
 	DBG("network %p", network);
 
+	connman_network_set_connected(network, TRUE);
+
 	return 0;
 }
 
 static int cable_disconnect(struct connman_network *network)
 {
 	DBG("network %p", network);
+
+	connman_network_set_connected(network, FALSE);
 
 	return 0;
 }
@@ -106,8 +110,6 @@ static void add_network(struct connman_device *device,
 	connman_network_set_available(network, TRUE);
 
 	connman_network_set_group(network, "cable");
-
-	connman_network_set_connected(network, TRUE);
 
 	ethernet->network = network;
 }
@@ -305,13 +307,34 @@ static struct connman_technology_driver tech_driver = {
 	.probe			= tech_probe,
 	.remove			= tech_remove,
 	.add_interface		= tech_add_interface,
-	.remove_interface 	= tech_remove_interface,
+	.remove_interface	= tech_remove_interface,
 	.set_tethering		= tech_set_tethering,
+};
+
+static int eth_probe(struct connman_technology *technology)
+{
+	return 0;
+}
+
+static void eth_remove(struct connman_technology *technology)
+{
+	DBG("");
+}
+
+static struct connman_technology_driver eth_driver = {
+	.name			= "ethernet",
+	.type			= CONNMAN_SERVICE_TYPE_ETHERNET,
+	.probe			= eth_probe,
+	.remove			= eth_remove,
 };
 
 static int ethernet_init(void)
 {
 	int err;
+
+	err = connman_technology_driver_register(&eth_driver);
+	if (err < 0)
+		return err;
 
 	err = connman_network_driver_register(&cable_driver);
 	if (err < 0)
@@ -335,6 +358,8 @@ static int ethernet_init(void)
 
 static void ethernet_exit(void)
 {
+	connman_technology_driver_unregister(&eth_driver);
+
 	connman_technology_driver_unregister(&tech_driver);
 
 	connman_network_driver_unregister(&cable_driver);

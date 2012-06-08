@@ -2,7 +2,7 @@
  *
  *  WPA supplicant library with GLib integration
  *
- *  Copyright (C) 2010  Intel Corporation. All rights reserved.
+ *  Copyright (C) 2012  Intel Corporation. All rights reserved.
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 2 as
@@ -188,6 +188,7 @@ struct g_supplicant_bss {
 	dbus_bool_t privacy;
 	dbus_bool_t psk;
 	dbus_bool_t ieee8021x;
+	unsigned int wps_capabilities;
 };
 
 struct _GSupplicantNetwork {
@@ -203,6 +204,7 @@ struct _GSupplicantNetwork {
 	GSupplicantMode mode;
 	GSupplicantSecurity security;
 	dbus_bool_t wps;
+	unsigned int wps_capabilities;
 	GHashTable *bss_table;
 	GHashTable *config_table;
 };
@@ -740,6 +742,9 @@ unsigned int g_supplicant_interface_get_max_scan_ssids(
 	if (interface == NULL)
 		return 0;
 
+	if (interface->max_scan_ssids == 0)
+		return WPAS_MAX_SCAN_SSIDS;
+
 	return interface->max_scan_ssids;
 }
 
@@ -857,6 +862,39 @@ dbus_bool_t g_supplicant_network_get_wps(GSupplicantNetwork *network)
 		return FALSE;
 
 	return network->wps;
+}
+
+dbus_bool_t g_supplicant_network_is_wps_active(GSupplicantNetwork *network)
+{
+	if (network == NULL)
+		return FALSE;
+
+	if (network->wps_capabilities & G_SUPPLICANT_WPS_CONFIGURED)
+		return TRUE;
+
+	return FALSE;
+}
+
+dbus_bool_t g_supplicant_network_is_wps_pbc(GSupplicantNetwork *network)
+{
+	if (network == NULL)
+		return FALSE;
+
+	if (network->wps_capabilities & G_SUPPLICANT_WPS_PBC)
+		return TRUE;
+
+	return FALSE;
+}
+
+dbus_bool_t g_supplicant_network_is_wps_advertizing(GSupplicantNetwork *network)
+{
+	if (network == NULL)
+		return FALSE;
+
+	if (network->wps_capabilities & G_SUPPLICANT_WPS_REGISTRAR)
+		return TRUE;
+
+	return FALSE;
 }
 
 static void merge_network(GSupplicantNetwork *network)
@@ -995,25 +1033,43 @@ static void interface_network_removed(DBusMessageIter *iter, void *user_data)
 
 static char *create_name(unsigned char *ssid, int ssid_len)
 {
-	char *name;
-	int i;
+	GString *string;
+	const gchar *remainder, *invalid;
+	int valid_bytes, remaining_bytes;
 
 	if (ssid_len < 1 || ssid[0] == '\0')
-		name = NULL;
-	else
-		name = g_try_malloc0(ssid_len + 1);
-
-	if (name == NULL)
 		return g_strdup("");
 
-	for (i = 0; i < ssid_len; i++) {
-		if (g_ascii_isprint(ssid[i]))
-			name[i] = ssid[i];
-		else
-			name[i] = ' ';
+	string = NULL;
+	remainder = (const gchar *)ssid;
+	remaining_bytes = ssid_len;
+
+	while (remaining_bytes != 0) {
+		if (g_utf8_validate(remainder, remaining_bytes,
+					&invalid) == TRUE) {
+			break;
+		}
+
+		valid_bytes = invalid - remainder;
+
+		if (string == NULL)
+			string = g_string_sized_new(remaining_bytes);
+
+		g_string_append_len(string, remainder, valid_bytes);
+
+		/* append U+FFFD REPLACEMENT CHARACTER */
+		g_string_append(string, "\357\277\275");
+
+		remaining_bytes -= valid_bytes + 1;
+		remainder = invalid + 1;
 	}
 
-	return name;
+	if (string == NULL)
+		return g_strndup((const gchar *)ssid, ssid_len + 1);
+
+	g_string_append(string, remainder);
+
+	return g_string_free(string, FALSE);
 }
 
 static char *create_group(struct g_supplicant_bss *bss)
@@ -1043,19 +1099,23 @@ static char *create_group(struct g_supplicant_bss *bss)
 	return g_string_free(str, FALSE);
 }
 
-static void add_bss_to_network(struct g_supplicant_bss *bss)
+static void add_or_replace_bss_to_network(struct g_supplicant_bss *bss)
 {
 	GSupplicantInterface *interface = bss->interface;
 	GSupplicantNetwork *network;
 	char *group;
 
 	group = create_group(bss);
+	SUPPLICANT_DBG("New group created: %s", group);
+
 	if (group == NULL)
 		return;
 
 	network = g_hash_table_lookup(interface->network_table, group);
 	if (network != NULL) {
 		g_free(group);
+		SUPPLICANT_DBG("Network %s already exist", network->name);
+
 		goto done;
 	}
 
@@ -1079,8 +1139,13 @@ static void add_bss_to_network(struct g_supplicant_bss *bss)
 	network->best_bss = bss;
 
 	network->wps = FALSE;
-	if ((bss->keymgmt & G_SUPPLICANT_KEYMGMT_WPS) != 0)
+	if ((bss->keymgmt & G_SUPPLICANT_KEYMGMT_WPS) != 0) {
 		network->wps = TRUE;
+
+		network->wps_capabilities |= bss->wps_capabilities;
+	}
+
+	SUPPLICANT_DBG("New network %s created", network->name);
 
 	network->bss_table = g_hash_table_new_full(g_str_hash, g_str_equal,
 							NULL, remove_bss);
@@ -1230,13 +1295,19 @@ static void bss_process_ies(DBusMessageIter *iter, void *user_data)
 	const unsigned char WPS_OUI[] = { 0x00, 0x50, 0xf2, 0x04 };
 	unsigned char *ie, *ie_end;
 	DBusMessageIter array;
+	unsigned int value;
 	int ie_len;
 
 #define WMM_WPA1_WPS_INFO 221
 #define WPS_INFO_MIN_LEN  6
 #define WPS_VERSION_TLV   0x104A
 #define WPS_STATE_TLV     0x1044
+#define WPS_METHODS_TLV   0x1012
+#define WPS_REGISTRAR_TLV 0x1041
 #define WPS_VERSION       0x10
+#define WPS_PBC           0x04
+#define WPS_PIN           0x00
+#define WPS_CONFIGURED    0x02
 
 	dbus_message_iter_recurse(iter, &array);
 	dbus_message_iter_get_fixed_array(&array, &ie, &ie_len);
@@ -1253,13 +1324,48 @@ static void bss_process_ies(DBusMessageIter *iter, void *user_data)
 
 		SUPPLICANT_DBG("IE: match WPS_OUI");
 
-		if (get_tlv(&ie[6], ie[1],
-				WPS_VERSION_TLV) == WPS_VERSION &&
-			get_tlv(&ie[6], ie[1],
-				WPS_STATE_TLV) != 0)
+		value = get_tlv(&ie[6], ie[1], WPS_STATE_TLV);
+		if (get_tlv(&ie[6], ie[1], WPS_VERSION_TLV) == WPS_VERSION &&
+								value != 0) {
 			bss->keymgmt |= G_SUPPLICANT_KEYMGMT_WPS;
+
+			if (value == WPS_CONFIGURED)
+				bss->wps_capabilities |=
+					G_SUPPLICANT_WPS_CONFIGURED;
+		}
+
+		value = get_tlv(&ie[6], ie[1], WPS_METHODS_TLV);
+		if (value != 0) {
+			if (GUINT16_FROM_BE(value) == WPS_PBC)
+				bss->wps_capabilities |= G_SUPPLICANT_WPS_PBC;
+			if (GUINT16_FROM_BE(value) == WPS_PIN)
+				bss->wps_capabilities |= G_SUPPLICANT_WPS_PIN;
+		} else
+			bss->wps_capabilities |=
+				G_SUPPLICANT_WPS_PBC | G_SUPPLICANT_WPS_PIN;
+
+		/* If the AP sends this it means it's advertizing
+		 * as a registrar and the WPS process is launched
+		 * on its side */
+		if (get_tlv(&ie[6], ie[1], WPS_REGISTRAR_TLV) != 0)
+			bss->wps_capabilities |= G_SUPPLICANT_WPS_REGISTRAR;
+
+		SUPPLICANT_DBG("WPS Methods 0x%x", bss->wps_capabilities);
 	}
 }
+
+static void bss_compute_security(struct g_supplicant_bss *bss)
+{
+	if (bss->ieee8021x == TRUE)
+		bss->security = G_SUPPLICANT_SECURITY_IEEE8021X;
+	else if (bss->psk == TRUE)
+		bss->security = G_SUPPLICANT_SECURITY_PSK;
+	else if (bss->privacy == TRUE)
+		bss->security = G_SUPPLICANT_SECURITY_WEP;
+	else
+		bss->security = G_SUPPLICANT_SECURITY_NONE;
+}
+
 
 static void bss_property(const char *key, DBusMessageIter *iter,
 							void *user_data)
@@ -1271,19 +1377,8 @@ static void bss_property(const char *key, DBusMessageIter *iter,
 
 	SUPPLICANT_DBG("key %s", key);
 
-	if (key == NULL) {
-		if (bss->ieee8021x == TRUE)
-			bss->security = G_SUPPLICANT_SECURITY_IEEE8021X;
-		else if (bss->psk == TRUE)
-			bss->security = G_SUPPLICANT_SECURITY_PSK;
-		else if (bss->privacy == TRUE)
-			bss->security = G_SUPPLICANT_SECURITY_WEP;
-		else
-			bss->security = G_SUPPLICANT_SECURITY_NONE;
-
-		add_bss_to_network(bss);
+	if (key == NULL)
 		return;
-	}
 
 	if (g_strcmp0(key, "BSSID") == 0) {
 		DBusMessageIter array;
@@ -1430,7 +1525,9 @@ static void interface_bss_added_with_keys(DBusMessageIter *iter,
 		return;
 
 	supplicant_dbus_property_foreach(iter, bss_property, bss);
-	bss_property(NULL, NULL, bss);
+
+	bss_compute_security(bss);
+	add_or_replace_bss_to_network(bss);
 }
 
 static void interface_bss_added_without_keys(DBusMessageIter *iter,
@@ -1447,6 +1544,9 @@ static void interface_bss_added_without_keys(DBusMessageIter *iter,
 	supplicant_dbus_property_get_all(bss->path,
 					SUPPLICANT_INTERFACE ".BSS",
 							bss_property, bss);
+
+	bss_compute_security(bss);
+	add_or_replace_bss_to_network(bss);
 }
 
 static void update_signal(gpointer key, gpointer value,
@@ -1930,6 +2030,7 @@ static void signal_bss_changed(const char *path, DBusMessageIter *iter)
 {
 	GSupplicantInterface *interface;
 	GSupplicantNetwork *network;
+	GSupplicantSecurity old_security;
 	struct g_supplicant_bss *bss;
 
 	SUPPLICANT_DBG("");
@@ -1947,6 +2048,39 @@ static void signal_bss_changed(const char *path, DBusMessageIter *iter)
 		return;
 
 	supplicant_dbus_property_foreach(iter, bss_property, bss);
+
+	old_security = network->security;
+	bss_compute_security(bss);
+
+	if (old_security != bss->security) {
+		struct g_supplicant_bss *new_bss;
+
+		SUPPLICANT_DBG("New network security for %s", bss->ssid);
+
+		/* Security change policy:
+		 * - we first copy the current bss into a new one with
+		 * its own pointer (path)
+		 * - we remove the current bss related nework which will
+		 * tell the plugin about such removal. This is done due
+		 * to the fact that a security change means a group change
+		 * so a complete network change.
+		 * (current bss becomes invalid as well)
+		 * - we add the new bss: it adds new network and tell the
+		 * plugin about it. */
+
+		new_bss = g_try_new0(struct g_supplicant_bss, 1);
+		if (new_bss == NULL)
+			return;
+
+		memcpy(new_bss, bss, sizeof(struct g_supplicant_bss));
+		new_bss->path = g_strdup(bss->path);
+
+		g_hash_table_remove(interface->network_table, network->group);
+
+		add_or_replace_bss_to_network(new_bss);
+
+		return;
+	}
 
 	if (bss->signal == network->signal)
 		return;
@@ -2487,7 +2621,7 @@ static void interface_scan_result(const char *error,
 	}
 
 	if (data != NULL && data->scan_params != NULL)
-		g_free(data->scan_params);
+		g_supplicant_free_scan_params(data->scan_params);
 
 	dbus_free(data);
 }
@@ -2512,7 +2646,7 @@ static void add_scan_frequencies(DBusMessageIter *iter,
 	unsigned int freq;
 	int i;
 
-	for (i = 0; i < G_SUPPLICANT_MAX_FAST_SCAN; i++) {
+	for (i = 0; i < scan_data->num_ssids; i++) {
 		freq = scan_data->freqs[i];
 		if (!freq)
 			break;
@@ -2537,11 +2671,13 @@ static void append_ssid(DBusMessageIter *iter,
 static void append_ssids(DBusMessageIter *iter, void *user_data)
 {
 	GSupplicantScanParams *scan_data = user_data;
-	int i;
+	GSList *list;
 
-	for (i = 0; i < scan_data->num_ssids; i++)
-		append_ssid(iter, scan_data->ssids[i].ssid,
-					scan_data->ssids[i].ssid_len);
+	for (list = scan_data->ssids; list; list = list->next) {
+		struct scan_ssid *scan_ssid = list->data;
+
+		append_ssid(iter, scan_ssid->ssid, scan_ssid->ssid_len);
+	}
 }
 
 static void supplicant_add_scan_frequency(DBusMessageIter *dict,
@@ -2552,7 +2688,7 @@ static void supplicant_add_scan_frequency(DBusMessageIter *dict,
 	DBusMessageIter entry, value, array;
 	const char *key = "Channels";
 
-	if (scan_params->freqs[0] != 0) {
+	if (scan_params->freqs && scan_params->freqs[0] != 0) {
 		dbus_message_iter_open_container(dict, DBUS_TYPE_DICT_ENTRY,
 						NULL, &entry);
 
@@ -2666,10 +2802,15 @@ static int parse_supplicant_error(DBusMessageIter *iter)
 	int err = -ECANCELED;
 	char *key;
 
+	/* If the given passphrase is malformed wpa_s returns
+	 * "invalid message format" but this error should be interpreted as
+	 * invalid-key.
+	 */
 	while (dbus_message_iter_get_arg_type(iter) == DBUS_TYPE_STRING) {
 		dbus_message_iter_get_basic(iter, &key);
-		if (strncmp(key, "psk", 4) == 0 ||
-			strncmp(key, "wep_key", 7) == 0) {
+		if (strncmp(key, "psk", 3) == 0 ||
+				strncmp(key, "wep_key", 7) == 0 ||
+				strcmp(key, "invalid message format") == 0) {
 			err = -ENOKEY;
 			break;
 		}
@@ -2825,9 +2966,8 @@ static void add_network_security_psk(DBusMessageIter *dict,
 					GSupplicantSSID *ssid)
 {
 	if (ssid->passphrase && strlen(ssid->passphrase) > 0) {
-
 		if (is_psk_raw_key(ssid->passphrase) == TRUE)
-			supplicant_dbus_property_append_fixed_array(dict,
+			supplicant_dbus_dict_append_fixed_array(dict,
 							"psk", DBUS_TYPE_BYTE,
 							&ssid->passphrase, 64);
 		else
@@ -3124,6 +3264,10 @@ static void interface_add_network_params(DBusMessageIter *iter, void *user_data)
 		supplicant_dbus_dict_append_basic(&dict, "frequency",
 					 DBUS_TYPE_UINT32, &ssid->freq);
 
+	if (ssid->bgscan != NULL)
+		supplicant_dbus_dict_append_basic(&dict, "bgscan",
+					DBUS_TYPE_STRING, &ssid->bgscan);
+
 	add_network_mode(&dict, ssid);
 
 	add_network_security(&dict, ssid);
@@ -3301,8 +3445,10 @@ static void interface_disconnect_result(const char *error,
 	/* If we are disconnecting from previous WPS successful
 	 * association. i.e.: it did not went through AddNetwork,
 	 * and interface->network_path was never set. */
-	if (data->interface->network_path == NULL)
+	if (data->interface->network_path == NULL) {
+		dbus_free(data);
 		return;
+	}
 
 	network_remove(data);
 }
@@ -3461,7 +3607,7 @@ void g_supplicant_unregister(const GSupplicantCallbacks *callbacks)
 		callback_system_killed();
 
 	if (interface_table != NULL) {
-		g_hash_table_foreach(interface_table,	
+		g_hash_table_foreach(interface_table,
 					unregister_remove_interface, NULL);
 		g_hash_table_destroy(interface_table);
 		interface_table = NULL;

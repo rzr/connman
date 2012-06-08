@@ -2,7 +2,7 @@
  *
  *  Connection Manager
  *
- *  Copyright (C) 2007-2010  Intel Corporation. All rights reserved.
+ *  Copyright (C) 2007-2012  Intel Corporation. All rights reserved.
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 2 as
@@ -89,14 +89,26 @@ enum connman_service_proxy_method {
 struct connman_service;
 
 struct connman_service *connman_service_create(void);
-struct connman_service *connman_service_ref(struct connman_service *service);
-void connman_service_unref(struct connman_service *service);
+
+#define connman_service_ref(service) \
+	connman_service_ref_debug(service, __FILE__, __LINE__, __func__)
+
+#define connman_service_unref(service) \
+	connman_service_unref_debug(service, __FILE__, __LINE__, __func__)
+
+struct connman_service *
+connman_service_ref_debug(struct connman_service *service,
+			const char *file, int line, const char *caller);
+void connman_service_unref_debug(struct connman_service *service,
+			const char *file, int line, const char *caller);
 
 enum connman_service_type connman_service_get_type(struct connman_service *service);
 char *connman_service_get_interface(struct connman_service *service);
 
 const char *connman_service_get_domainname(struct connman_service *service);
 char **connman_service_get_nameservers(struct connman_service *service);
+char **connman_service_get_timeservers_config(struct connman_service *service);
+char **connman_service_get_timeservers(struct connman_service *service);
 void connman_service_set_proxy_method(struct connman_service *service, enum connman_service_proxy_method method);
 enum connman_service_proxy_method connman_service_get_proxy_method(struct connman_service *service);
 char **connman_service_get_proxy_servers(struct connman_service *service);

@@ -2,7 +2,7 @@
  *
  *  Connection Manager
  *
- *  Copyright (C) 2007-2010  Intel Corporation. All rights reserved.
+ *  Copyright (C) 2007-2012  Intel Corporation. All rights reserved.
  *  Copyright (C) 2010 Nokia Corporation and/or its subsidiary(-ies).
  *  Copyright (C) 2011  BWM Car IT GmbH. All rights reserved.
  *
@@ -83,13 +83,48 @@ enum ofono_api {
  *   powered -> SubscriberIdentity or Online = True -> gprs, context ->
  *     attached -> netreg -> ready
  *
- * Enabling and disabling modems are steered through the rfkill
- * interface. That means when ConnMan toggles the rfkill bit oFono
- * will add or remove the modems.
+ * Depending on the modem type, this plugin will behave differently.
  *
- * ConnMan will always power up (set Powered and Online) the
- * modems. No need to power them down because this will be done
- * through the rfkill inteface.
+ * GSM working flow:
+ *
+ * When a new modem appears, the plugin always powers it up. This
+ * allows the plugin to create a connman_device. The core will call
+ * modem_enable() if the technology is enabled. modem_enable() will
+ * then set the modem online. If the technology is disabled then
+ * modem_disable() will just set the modem offline. The modem is
+ * always kept powered all the time.
+ *
+ * After setting the modem online the plugin waits for the
+ * ConnectionManager and ConnectionContext to appear. When the context
+ * signals that it is attached and the NetworkRegistration interface
+ * appears, a new Service will be created and registered at the core.
+ *
+ * When asked to connect to the network (network_connect()) the plugin
+ * will set the Active property on the context. If this operation is
+ * successful the modem is connected to the network. oFono will inform
+ * the plugin about IP configuration through the updating the context's
+ * properties.
+ *
+ * CDMA working flow:
+ *
+ * When a new modem appears, the plugin always powers it up. This
+ * allows the plugin to create connman_device either using IMSI either
+ * using modem Serial if the modem got a SIM interface or not.
+ *
+ * As for GSM, the core will call modem_enable() if the technology
+ * is enabled. modem_enable() will then set the modem online.
+ * If the technology is disabled then modem_disable() will just set the
+ * modem offline. The modem is always kept powered all the time.
+ *
+ * After setting the modem online the plugin waits for CdmaConnectionManager
+ * interface to appear. Then, once CdmaNetworkRegistration appears, a new
+ * Service will be created and registered at the core.
+ *
+ * When asked to connect to the network (network_connect()) the plugin
+ * will power up the CdmaConnectionManager interface.
+ * If the operation is successful the modem is connected to the network.
+ * oFono will inform the plugin about IP configuration through the
+ * updating CdmaConnectionManager settings properties.
  */
 
 static DBusConnection *connection;
@@ -137,6 +172,7 @@ struct modem_data {
 	/* ConnectionContext Interface */
 	connman_bool_t active;
 	connman_bool_t set_active;
+	connman_bool_t valid_apn; /* APN is 'valid' if length > 0 */
 
 	/* SimManager Interface */
 	char *imsi;
@@ -277,6 +313,9 @@ static void set_disconnected(struct modem_data *modem)
 {
 	DBG("%s", modem->path);
 
+	if (modem->network == NULL)
+		return;
+
 	connman_network_set_connected(modem->network, FALSE);
 }
 
@@ -338,8 +377,10 @@ static int set_property(struct modem_data *modem,
 	DBG("%s path %s %s.%s", modem->path, path, interface, property);
 
 	if (modem->call_set_property != NULL) {
-		connman_error("Pending SetProperty");
-		return -EBUSY;
+		DBG("Cancel pending SetProperty");
+
+		dbus_pending_call_cancel(modem->call_set_property);
+		modem->call_set_property = NULL;
 	}
 
 	message = dbus_message_new_method_call(OFONO_SERVICE, path,
@@ -877,8 +918,6 @@ static connman_bool_t ready_to_create_device(struct modem_data *modem)
 	 * different:
 	 * - GSM modems will expose the SIM interface then the
 	 *   CM interface.
-	 * - DUN modems will expose first a unique serial number (BDADDR)
-	 *   and then the CM interface.
 	 * - CDMA modems will expose CM first and sometime later
 	 *   a unique serial number.
 	 *
@@ -1068,8 +1107,17 @@ static int add_cm_context(struct modem_data *modem, const char *context_path,
 			dbus_message_iter_get_basic(&value, &active);
 
 			DBG("%s Active %d", modem->path, active);
-		}
+		} else if (g_str_equal(key, "AccessPointName") == TRUE) {
+			const char *apn;
 
+			dbus_message_iter_get_basic(&value, &apn);
+			if (apn != NULL && strlen(apn) > 0)
+				modem->valid_apn = TRUE;
+			else
+				modem->valid_apn = FALSE;
+
+			DBG("%s AccessPointName '%s'", modem->path, apn);
+		}
 		dbus_message_iter_next(dict);
 	}
 
@@ -1083,6 +1131,12 @@ static int add_cm_context(struct modem_data *modem, const char *context_path,
 
 	g_hash_table_replace(context_hash, g_strdup(context_path), modem);
 
+	if (modem->valid_apn == TRUE && modem->attached == TRUE &&
+			has_interface(modem->interfaces,
+				OFONO_API_NETREG) == TRUE) {
+		add_network(modem);
+	}
+
 	return 0;
 }
 
@@ -1092,10 +1146,18 @@ static void remove_cm_context(struct modem_data *modem,
 	if (modem->context == NULL)
 		return;
 
+	if (modem->network != NULL)
+		remove_network(modem);
+
 	g_hash_table_remove(context_hash, context_path);
 
 	network_context_free(modem->context);
 	modem->context = NULL;
+
+	modem->valid_apn = FALSE;
+
+	if (modem->network != NULL)
+		remove_network(modem);
 }
 
 static gboolean context_changed(DBusConnection *connection,
@@ -1143,6 +1205,39 @@ static gboolean context_changed(DBusConnection *connection,
 			set_connected(modem);
 		else
 			set_disconnected(modem);
+	} else if (g_str_equal(key, "AccessPointName") == TRUE) {
+		const char *apn;
+
+		dbus_message_iter_get_basic(&value, &apn);
+
+		DBG("%s AccessPointName %s", modem->path, apn);
+
+		if (apn != NULL && strlen(apn) > 0) {
+			modem->valid_apn = TRUE;
+
+			if (modem->network != NULL)
+				return TRUE;
+
+			if (modem->attached == FALSE)
+				return TRUE;
+
+			if (has_interface(modem->interfaces,
+					OFONO_API_NETREG) == FALSE) {
+				return TRUE;
+			}
+
+			add_network(modem);
+
+			if (modem->active == TRUE)
+				set_connected(modem);
+		} else {
+			modem->valid_apn = FALSE;
+
+			if (modem->network == NULL)
+				return TRUE;
+
+			remove_network(modem);
+		}
 	}
 
 	return TRUE;
@@ -1245,7 +1340,7 @@ static gboolean cm_context_added(DBusConnection *connection,
 
 	DBG("%s", path);
 
-	modem = g_hash_table_lookup(modem_hash, context_path);
+	modem = g_hash_table_lookup(modem_hash, path);
 	if (modem == NULL)
 		return TRUE;
 
@@ -1399,11 +1494,12 @@ static void netreg_update_regdom(struct modem_data *modem,
 
 
 	mcc = atoi(mobile_country_code);
-	if (mcc > 799)
+	if (mcc > 799 || mcc < 200)
 		return;
 
 	alpha2 = mcc_country_codes[mcc - 200];
-	connman_technology_set_regdom(alpha2);
+	if (alpha2 != NULL)
+		connman_technology_set_regdom(alpha2);
 }
 
 static gboolean netreg_changed(DBusConnection *connection, DBusMessage *message,
@@ -1480,7 +1576,8 @@ static void netreg_properties_reply(struct modem_data *modem,
 		return;
 	}
 
-	add_network(modem);
+	if (modem->valid_apn == TRUE)
+		add_network(modem);
 
 	if (modem->active == TRUE)
 		set_connected(modem);
@@ -2352,7 +2449,7 @@ static int network_disconnect(struct connman_network *network)
 }
 
 static struct connman_network_driver network_driver = {
-	.name		= "network",
+	.name		= "cellular",
 	.type		= CONNMAN_NETWORK_TYPE_CELLULAR,
 	.probe		= network_probe,
 	.remove		= network_remove,
@@ -2407,6 +2504,22 @@ static struct connman_device_driver modem_driver = {
 	.remove		= modem_remove,
 	.enable		= modem_enable,
 	.disable	= modem_disable,
+};
+
+static int tech_probe(struct connman_technology *technology)
+{
+	return 0;
+}
+
+static void tech_remove(struct connman_technology *technology)
+{
+}
+
+static struct connman_technology_driver tech_driver = {
+	.name		= "cellular",
+	.type		= CONNMAN_SERVICE_TYPE_CELLULAR,
+	.probe		= tech_probe,
+	.remove		= tech_remove,
 };
 
 static guint watch;
@@ -2523,6 +2636,13 @@ static int ofono_init(void)
 		goto remove;
 	}
 
+	err = connman_technology_driver_register(&tech_driver);
+	if (err < 0) {
+		connman_device_driver_unregister(&modem_driver);
+		connman_network_driver_unregister(&network_driver);
+		goto remove;
+	}
+
 	return 0;
 
 remove:
@@ -2566,6 +2686,7 @@ static void ofono_exit(void)
 		context_hash = NULL;
 	}
 
+	connman_technology_driver_unregister(&tech_driver);
 	connman_device_driver_unregister(&modem_driver);
 	connman_network_driver_unregister(&network_driver);
 

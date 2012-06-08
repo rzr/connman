@@ -65,7 +65,7 @@ sbin_PROGRAMS = src/connmand
 src_connmand_SOURCES = $(gdbus_sources) $(gdhcp_sources) \
 			gweb/gweb.h gweb/gweb.c \
 			gweb/gresolv.h gweb/gresolv.c \
-			gweb/giognutls.h gweb/gionotls.c \
+			gweb/giognutls.h gweb/giognutls.c \
 			$(builtin_sources) src/connman.ver \
 			src/main.c src/connman.h src/log.c \
 			src/error.c src/plugin.c src/task.c \
@@ -74,15 +74,16 @@ src_connmand_SOURCES = $(gdbus_sources) $(gdhcp_sources) \
 			src/clock.c src/timezone.c \
 			src/agent.c src/notifier.c src/provider.c \
 			src/resolver.c src/ipconfig.c src/detect.c src/inet.c \
-			src/dhcp.c src/rtnl.c src/proxy.c \
+			src/dhcp.c src/dhcpv6.c src/rtnl.c src/proxy.c \
 			src/utsname.c src/timeserver.c src/rfkill.c \
 			src/storage.c src/dbus.c src/config.c \
 			src/technology.c src/counter.c src/ntp.c \
 			src/session.c src/tethering.c src/wpad.c src/wispr.c \
-			src/stats.c src/iptables.c src/dnsproxy.c src/6to4.c
+			src/stats.c src/iptables.c src/dnsproxy.c src/6to4.c \
+			src/ippool.c src/bridge.c src/nat.c
 
 src_connmand_LDADD = $(builtin_libadd) @GLIB_LIBS@ @DBUS_LIBS@ \
-				@CAPNG_LIBS@ @XTABLES_LIBS@ -lresolv -ldl
+				@XTABLES_LIBS@ @GNUTLS_LIBS@ -lresolv -ldl
 
 src_connmand_LDFLAGS = -Wl,--export-dynamic \
 				-Wl,--version-script=$(srcdir)/src/connman.ver
@@ -109,7 +110,7 @@ build_plugindir = $(plugindir)
 build_scriptdir = $(scriptdir)
 endif
 
-AM_CFLAGS = @DBUS_CFLAGS@ @GLIB_CFLAGS@ @CAPNG_CFLAGS@ @XTABLES_CFLAGS@ \
+AM_CFLAGS = @DBUS_CFLAGS@ @GLIB_CFLAGS@ @XTABLES_CFLAGS@ \
 				@GNUTLS_CFLAGS@ $(builtin_cflags) \
 				-DCONNMAN_PLUGIN_BUILTIN \
 				-DSTATEDIR=\""$(statedir)"\" \
@@ -121,7 +122,7 @@ AM_CFLAGS = @DBUS_CFLAGS@ @GLIB_CFLAGS@ @CAPNG_CFLAGS@ @XTABLES_CFLAGS@ \
 INCLUDES = -I$(builddir)/include -I$(builddir)/src -I$(srcdir)/gdbus
 
 EXTRA_DIST = src/genbuiltin src/connman-dbus.conf src/connman-polkit.conf \
-		plugins/connman-nmcompat.conf
+		plugins/connman-nmcompat.conf gweb/gionotls.c
 
 
 script_DATA =
@@ -144,7 +145,7 @@ noinst_PROGRAMS += tools/wispr tools/supplicant-test \
 			tools/dbus-test tools/polkit-test \
 			tools/iptables-test tools/tap-test tools/wpad-test \
 			tools/stats-tool tools/private-network-test \
-			tools/alg-test unit/test-session
+			unit/test-session unit/test-ippool unit/test-nat
 
 tools_wispr_SOURCES = $(gweb_sources) tools/wispr.c
 tools_wispr_LDADD = @GLIB_LIBS@ @GNUTLS_LIBS@ -lresolv
@@ -180,28 +181,35 @@ tools_iptables_test_LDADD = @GLIB_LIBS@ @XTABLES_LIBS@
 
 tools_private_network_test_LDADD = @GLIB_LIBS@ @DBUS_LIBS@
 
-tools_alg_test_LDADD = @GLIB_LIBS@
-
 unit_test_session_SOURCES = $(gdbus_sources) src/log.c src/dbus.c \
 		unit/test-session.c unit/utils.c unit/manager-api.c \
 		unit/session-api.c unit/test-connman.h
 unit_test_session_LDADD = @GLIB_LIBS@ @DBUS_LIBS@ -ldl
 unit_objects += $(unit_test_session_OBJECTS)
+
+unit_test_ippool_SOURCES = $(gdbus_sources) src/log.c src/dbus.c \
+		 src/ippool.c unit/test-ippool.c
+unit_test_ippool_LDADD = @GLIB_LIBS@ @DBUS_LIBS@ -ldl
+unit_objects += $(unit_test_ippool_OBJECTS)
+
+unit_test_nat_SOURCES = $(gdbus_sources) src/log.c src/dbus.c \
+		src/iptables.c  src/nat.c unit/test-nat.c
+unit_test_nat_LDADD = @GLIB_LIBS@ @DBUS_LIBS@  @XTABLES_LIBS@ -ldl
+unit_objects += $(unit_nat_ippool_OBJECTS)
 endif
 
-test_scripts = test/get-state test/list-profiles test/list-services \
-		test/connect-service test/monitor-services test/set-address \
+test_scripts = test/get-state test/list-services \
+		test/monitor-services test/test-clock \
 		test/simple-agent test/show-introspection test/test-compat \
 		test/test-manager test/test-connman test/monitor-connman \
-		test/connect-vpn test/disconnect-vpn test/monitor-manager \
+		test/connect-vpn test/disconnect-vpn \
 		test/test-counter test/set-ipv4-method test/set-ipv6-method \
-		test/set-nameservers test/set-domains test/find-service \
 		test/get-services test/get-proxy-autoconfig test/set-proxy \
 		test/enable-tethering test/disable-tethering test/backtrace \
-		test/test-session test/provision-service test/test-supplicant \
+		test/test-session test/test-supplicant \
 		test/test-new-supplicant test/service-move-before \
 		test/set-global-timeservers test/get-global-timeservers \
-		test/test-clock
+		test/set-nameservers test/set-domains
 
 if TEST
 testdir = $(pkglibdir)/test
@@ -215,6 +223,8 @@ EXTRA_DIST += doc/overview-api.txt doc/behavior-api.txt \
 				doc/manager-api.txt doc/agent-api.txt \
 				doc/service-api.txt doc/technology-api.txt \
 				doc/counter-api.txt doc/config-format.txt \
+				doc/clock-api.txt doc/session-api.txt \
+				doc/session-overview.txt doc/backtrace.txt \
 				doc/advanced-configuration.txt
 
 
@@ -224,19 +234,12 @@ pkgconfig_DATA = connman.pc
 
 DISTCHECK_CONFIGURE_FLAGS = --disable-gtk-doc \
 				--disable-datafiles \
-				--enable-loopback \
-				--enable-ethernet \
-				--enable-wifi \
-				--enable-bluetooth \
-				--enable-ofono \
-				--enable-pacrunner \
-				--enable-google \
-				--enable-meego \
-				--enable-client \
 				--enable-hh2serial-gps \
-				--enable-ntpd \
 				--enable-openconnect \
-				--enable-tools
+				--enable-openvpn \
+				--enable-vpnc \
+				--enable-nmcompat \
+				--enable-polkit
 
 DISTCLEANFILES = $(pkgconfig_DATA)
 

@@ -2,7 +2,7 @@
  *
  *  Connection Manager
  *
- *  Copyright (C) 2007-2010  Intel Corporation. All rights reserved.
+ *  Copyright (C) 2007-2012  Intel Corporation. All rights reserved.
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 2 as
@@ -45,7 +45,6 @@ static enum time_updates time_updates_config = TIME_UPDATES_AUTO;
 static enum timezone_updates timezone_updates_config = TIMEZONE_UPDATES_AUTO;
 
 static char *timezone_config = NULL;
-static char **timeservers_config = NULL;
 
 static const char *time_updates2string(enum time_updates value)
 {
@@ -98,14 +97,17 @@ static enum timezone_updates string2timezone_updates(const char *value)
 static void append_timeservers(DBusMessageIter *iter, void *user_data)
 {
 	int i;
+	char **timeservers = __connman_timeserver_system_get();
 
-	if (timeservers_config == NULL)
+	if (timeservers == NULL)
 		return;
 
-	for (i = 0; timeservers_config[i] != NULL; i++) {
+	for (i = 0; timeservers[i] != NULL; i++) {
 		dbus_message_iter_append_basic(iter,
-				DBUS_TYPE_STRING, &timeservers_config[i]);
+				DBUS_TYPE_STRING, &timeservers[i]);
 	}
+
+	g_strfreev(timeservers);
 }
 
 static DBusMessage *get_properties(DBusConnection *conn,
@@ -167,8 +169,15 @@ static DBusMessage *set_property(DBusConnection *conn,
 	if (dbus_message_iter_init(msg, &iter) == FALSE)
 		return __connman_error_invalid_arguments(msg);
 
+	if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_STRING)
+		return __connman_error_invalid_arguments(msg);
+
 	dbus_message_iter_get_basic(&iter, &name);
 	dbus_message_iter_next(&iter);
+
+	if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_VARIANT)
+		return __connman_error_invalid_arguments(msg);
+
 	dbus_message_iter_recurse(&iter, &value);
 
 	type = dbus_message_iter_get_arg_type(&value);
@@ -190,6 +199,10 @@ static DBusMessage *set_property(DBusConnection *conn,
 
 		if (settimeofday(&tv, NULL) < 0)
 			return __connman_error_invalid_arguments(msg);
+
+		connman_dbus_property_changed_basic(CONNMAN_MANAGER_PATH,
+				CONNMAN_CLOCK_INTERFACE, "Time",
+				DBUS_TYPE_UINT64, &newval);
 	} else if (g_str_equal(name, "TimeUpdates") == TRUE) {
 		const char *strval;
 		enum time_updates newval;
@@ -247,37 +260,44 @@ static DBusMessage *set_property(DBusConnection *conn,
 				DBUS_TYPE_STRING, &strval);
 	} else if (g_str_equal(name, "Timeservers") == TRUE) {
 		DBusMessageIter entry;
-		GString *str;
+		char **str = NULL;
+		GSList *list = NULL;
+		int count = 0;
 
 		if (type != DBUS_TYPE_ARRAY)
-			return __connman_error_invalid_arguments(msg);
-
-		str = g_string_new(NULL);
-		if (str == NULL)
 			return __connman_error_invalid_arguments(msg);
 
 		dbus_message_iter_recurse(&value, &entry);
 
 		while (dbus_message_iter_get_arg_type(&entry) == DBUS_TYPE_STRING) {
 			const char *val;
+			GSList *new_head;
 
 			dbus_message_iter_get_basic(&entry, &val);
-			dbus_message_iter_next(&entry);
 
-			if (str->len > 0)
-				g_string_append_printf(str, " %s", val);
-			else
-				g_string_append(str, val);
+			new_head = __connman_timeserver_add_list(list, val);
+			if (list != new_head) {
+				count++;
+				list = new_head;
+			}
+
+			dbus_message_iter_next(&entry);
 		}
 
-		g_strfreev(timeservers_config);
+		if (list != NULL) {
+			str = g_new0(char *, count+1);
 
-		if (str->len > 0)
-			timeservers_config = g_strsplit_set(str->str, " ", 0);
-		else
-			timeservers_config = NULL;
+			while (list != NULL) {
+				count--;
+				str[count] = list->data;
+				list = g_slist_delete_link(list, list);
+			};
+		}
 
-		g_string_free(str, TRUE);
+		__connman_timeserver_system_set(str);
+
+		if (str != NULL)
+			g_strfreev(str);
 
 		connman_dbus_property_changed_array(CONNMAN_MANAGER_PATH,
 				CONNMAN_CLOCK_INTERFACE, "Timeservers",
@@ -351,5 +371,4 @@ void __connman_clock_cleanup(void)
 	__connman_timezone_cleanup();
 
 	g_free(timezone_config);
-	g_strfreev(timeservers_config);
 }

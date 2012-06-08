@@ -2,7 +2,7 @@
  *
  *  Connection Manager
  *
- *  Copyright (C) 2007-2010  Intel Corporation. All rights reserved.
+ *  Copyright (C) 2007-2012  Intel Corporation. All rights reserved.
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 2 as
@@ -358,6 +358,32 @@ dbus_bool_t connman_dbus_setting_changed_array(const char *owner,
 	connman_dbus_dict_close(&array, &dict);
 
 	g_dbus_send_message(connection, msg);
+
+	return TRUE;
+}
+
+dbus_bool_t __connman_dbus_append_objpath_dict_array(DBusMessage *msg,
+		connman_dbus_append_cb_t function, void *user_data)
+{
+	DBusMessageIter iter, array;
+
+	if (msg == NULL || function == NULL)
+		return FALSE;
+
+	dbus_message_iter_init_append(msg, &iter);
+	dbus_message_iter_open_container(&iter, DBUS_TYPE_ARRAY,
+			DBUS_STRUCT_BEGIN_CHAR_AS_STRING
+			DBUS_TYPE_OBJECT_PATH_AS_STRING
+			DBUS_TYPE_ARRAY_AS_STRING
+				DBUS_DICT_ENTRY_BEGIN_CHAR_AS_STRING
+					DBUS_TYPE_STRING_AS_STRING
+					DBUS_TYPE_VARIANT_AS_STRING
+				DBUS_DICT_ENTRY_END_CHAR_AS_STRING
+			DBUS_STRUCT_END_CHAR_AS_STRING, &array);
+
+	function(&array, user_data);
+
+	dbus_message_iter_close_container(&iter, &array);
 
 	return TRUE;
 }

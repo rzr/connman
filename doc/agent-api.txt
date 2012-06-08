@@ -23,6 +23,17 @@ Methods		void Release()
 
 			Possible Errors: net.connman.Agent.Error.Retry
 
+		void RequestBrowser(object service, string url)
+
+			This method gets called when it is required
+			to ask the user to open a website to procceed
+			with login handling.
+
+			This can happen if connected to a hotspot portal
+			page without WISPr support.
+
+			Possible Errors: net.connman.Agent.Error.Canceled
+
 		dict RequestInput(object service, dict fields)
 
 			This method gets called when trying to connect to
@@ -40,7 +51,12 @@ Methods		void Release()
 			The dictionary arguments contains field names with
 			their input parameters.
 
+			In case of WISPr credentials requests and if the user
+			prefers to login through the browser by himself, agent
+			will have to return a LaunchBrowser error (see below).
+
 			Possible Errors: net.connman.Agent.Error.Canceled
+					 net.connman.Agent.Error.LaunchBrowser
 
 		void Cancel()
 
@@ -116,7 +132,7 @@ Arguments	string Type
 Examples	Requesting a passphrase for WPA2 network
 
 			RequestInput("/service1",
-				{ "Passphrase" : { "Type" : "psk",
+				{ "Passphrase" : { "Type"        : "psk",
 						   "Requirement" : "mandatory"
 						 }
 				}
@@ -129,9 +145,9 @@ Examples	Requesting a passphrase for WPA2 network
 					     "Requirement" : "mandatory",
 					     "Alternates"  : [ "SSID" ]
 					   },
-				  "SSID" : { "Type" : "ssid",
-				             "Requirement" : "alternate"
-				           }
+				  "SSID" : { "Type"        : "ssid",
+					     "Requirement" : "alternate"
+					   }
 				}
 			==> { "Name" : "My hidden network" }
 
@@ -143,7 +159,7 @@ Examples	Requesting a passphrase for WPA2 network
 						   "Alternates"  : [ "WPS" ]
 						 },
 				  "WPS"        : { "Type"        : "wpspin",
-				                   "Requirement" : "alternate"
+						   "Requirement" : "alternate"
 						 }
 				}
 
@@ -155,7 +171,7 @@ Examples	Requesting a passphrase for WPA2 network
 				{ "Identity"   : { "Type"        : "string",
 						   "Requirement" : "mandatory"
 						 },
-				  "Passphrase" : { "Type" : "passphrase",
+				  "Passphrase" : { "Type"        : "passphrase",
 						   "Requirement" : "mandatory"
 						 }
 				}
@@ -168,7 +184,7 @@ Examples	Requesting a passphrase for WPA2 network
 				{ "Identity"   : { "Type"        : "string",
 						   "Requirement" : "mandatory"
 						 },
-				  "Passphrase" : { "Type" : "response",
+				  "Passphrase" : { "Type"        : "response",
 						   "Requirement" : "mandatory"
 						 }
 				}
@@ -178,12 +194,12 @@ Examples	Requesting a passphrase for WPA2 network
 		Requesting username and password for a WISPr-enabled hotspot:
 
 			RequestInput("/service5",
-                                { "Username"   : { "Type"        : "string",
-                                                   "Requirement" : "mandatory"
-                                                 },
-                                  "Password"   : { "Type"        : "passphrase",
-                                                   "Requirement" : "mandatory"
-                                                 }
-                                }
+				{ "Username"   : { "Type"        : "string",
+						   "Requirement" : "mandatory"
+						 },
+				  "Password"   : { "Type"        : "passphrase",
+						   "Requirement" : "mandatory"
+						 }
+				}
 
-                        ==> { "Username" : "foo", "Password": "secret" }
+			==> { "Username" : "foo", "Password": "secret" }

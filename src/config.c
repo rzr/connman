@@ -2,7 +2,7 @@
  *
  *  Connection Manager
  *
- *  Copyright (C) 2007-2010  Intel Corporation. All rights reserved.
+ *  Copyright (C) 2007-2012  Intel Corporation. All rights reserved.
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 2 as
@@ -378,7 +378,7 @@ static int load_config(struct connman_config *config)
 	gsize length;
 	char **groups;
 	char *str;
-	gboolean protected;
+	gboolean protected, found = FALSE;
 	int i;
 
 	DBG("config %p", config);
@@ -412,9 +412,16 @@ static int load_config(struct connman_config *config)
 	groups = g_key_file_get_groups(keyfile, &length);
 
 	for (i = 0; groups[i] != NULL; i++) {
-		if (g_str_has_prefix(groups[i], "service_") == TRUE)
-			load_service(keyfile, groups[i], config);
+		if (g_str_has_prefix(groups[i], "service_") == TRUE) {
+			if (load_service(keyfile, groups[i], config) == 0)
+				found = TRUE;
+		}
 	}
+
+	if (found == FALSE)
+		connman_warn("Config file %s/%s.config does not contain any "
+			"configuration that can be provisioned!",
+			STORAGEDIR, config->ident);
 
 	g_strfreev(groups);
 

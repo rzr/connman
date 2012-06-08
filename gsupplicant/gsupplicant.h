@@ -2,7 +2,7 @@
  *
  *  WPA supplicant library with GLib integration
  *
- *  Copyright (C) 2010  Intel Corporation. All rights reserved.
+ *  Copyright (C) 2012  Intel Corporation. All rights reserved.
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 2 as
@@ -73,7 +73,10 @@ extern "C" {
 #define G_SUPPLICANT_PAIRWISE_TKIP	(1 << 1)
 #define G_SUPPLICANT_PAIRWISE_CCMP	(1 << 2)
 
-#define G_SUPPLICANT_MAX_FAST_SCAN	4
+#define G_SUPPLICANT_WPS_CONFIGURED     (1 << 0)
+#define G_SUPPLICANT_WPS_PBC            (1 << 1)
+#define G_SUPPLICANT_WPS_PIN            (1 << 2)
+#define G_SUPPLICANT_WPS_REGISTRAR      (1 << 3)
 
 typedef enum {
 	G_SUPPLICANT_MODE_UNKNOWN,
@@ -129,19 +132,31 @@ struct _GSupplicantSSID {
 	const char *phase2_auth;
 	dbus_bool_t use_wps;
 	const char *pin_wps;
+	const char *bgscan;
 };
 
 typedef struct _GSupplicantSSID GSupplicantSSID;
 
+/*
+ * Max number of SSIDs that can be scanned.
+ * In wpa_s 0.7x the limit is 4.
+ * In wps_s 0.8 or later it is 16.
+ * The value is only used if wpa_supplicant does not return any max limit
+ * for number of scannable SSIDs.
+ */
+#define WPAS_MAX_SCAN_SSIDS 4
+
+struct scan_ssid {
+	unsigned char ssid[32];
+	uint8_t ssid_len;
+};
+
 struct _GSupplicantScanParams {
-	struct scan_ssid {
-		unsigned char ssid[32];
-		uint8_t ssid_len;
-	} ssids[G_SUPPLICANT_MAX_FAST_SCAN];
+	GSList *ssids;
 
 	uint8_t num_ssids;
 
-	uint16_t freqs[G_SUPPLICANT_MAX_FAST_SCAN];
+	uint16_t *freqs;
 };
 
 typedef struct _GSupplicantScanParams GSupplicantScanParams;
@@ -220,6 +235,9 @@ const char *g_supplicant_network_get_security(GSupplicantNetwork *network);
 dbus_int16_t g_supplicant_network_get_signal(GSupplicantNetwork *network);
 dbus_uint16_t g_supplicant_network_get_frequency(GSupplicantNetwork *network);
 dbus_bool_t g_supplicant_network_get_wps(GSupplicantNetwork *network);
+dbus_bool_t g_supplicant_network_is_wps_active(GSupplicantNetwork *network);
+dbus_bool_t g_supplicant_network_is_wps_pbc(GSupplicantNetwork *network);
+dbus_bool_t g_supplicant_network_is_wps_advertizing(GSupplicantNetwork *network);
 
 struct _GSupplicantCallbacks {
 	void (*system_ready) (void);
@@ -240,6 +258,14 @@ typedef struct _GSupplicantCallbacks GSupplicantCallbacks;
 
 int g_supplicant_register(const GSupplicantCallbacks *callbacks);
 void g_supplicant_unregister(const GSupplicantCallbacks *callbacks);
+
+static inline
+void g_supplicant_free_scan_params(GSupplicantScanParams *scan_params)
+{
+	g_slist_free_full(scan_params->ssids, g_free);
+	g_free(scan_params->freqs);
+	g_free(scan_params);
+}
 
 #ifdef __cplusplus
 }
