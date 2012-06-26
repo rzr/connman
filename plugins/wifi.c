@@ -608,6 +608,8 @@ static int wifi_enable(struct connman_device *device)
 	ret = g_supplicant_interface_create(interface, driver, NULL,
 						interface_create_callback,
 							wifi);
+        // added by chengyi.zhao
+	DBG("%s does not AP mode", device->network->wifi.mode);
 	if (ret < 0)
 		return ret;
 
