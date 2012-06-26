@@ -610,7 +610,7 @@ static int wifi_enable(struct connman_device *device)
 							wifi);
         // added by chengyi.zhao
 	//	DBG("%s does not AP mode", device->network->wifi.mode);
-	DBG("%p does not AP mode", device->network);
+	DBG("%p does not AP mode", device);
 	if (ret < 0)
 		return ret;
 
