@@ -1698,6 +1698,23 @@ static void interface_property(const char *key, DBusMessageIter *iter,
 	} else
 		SUPPLICANT_DBG("key %s type %c",
 				key, dbus_message_iter_get_arg_type(iter));
+
+	if (key != NULL) {
+		debug_strvalmap("000 KeyMgmt capability", keymgmt_map,
+						interface->keymgmt_capa);
+		debug_strvalmap("000 AuthAlg capability", authalg_capa_map,
+						interface->authalg_capa);
+		debug_strvalmap("000 Protocol capability", proto_capa_map,
+						interface->proto_capa);
+		debug_strvalmap("000 Pairwise capability", pairwise_map,
+						interface->pairwise_capa);
+		debug_strvalmap("000 Group capability", group_map,
+						interface->group_capa);
+		debug_strvalmap("000 Scan capability", scan_capa_map,
+						interface->scan_capa);
+		debug_strvalmap("000 Mode capability", mode_capa_map,
+						interface->mode_capa);
+	}
 }
 
 static void scan_network_update(DBusMessageIter *iter, void *user_data)
