@@ -3,10 +3,10 @@
 OfflineMode=false
 
 [WiFi]
-Enable=true
+Enable=false
 
 [Bluetooth]
-Enable=true
+Enable=false
 
 [Wired]
 Enable=true
