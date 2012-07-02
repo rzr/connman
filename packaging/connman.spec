@@ -80,7 +80,7 @@ Scripts for testing Connman and its functionality
     --enable-portal=builtin \
     --enable-threads \
     --enable-test \
-    --with-systemdunitdir=/%{_lib}/systemd/system
+    --with-systemdunitdir=/usr/lib/systemd/system
 # disabled for now:
 %ifarch %{ix86}
 ##    --enable-iwmx \
@@ -91,8 +91,8 @@ Scripts for testing Connman and its functionality
 make %{?jobs:-j%jobs}
 
 %install
-mkdir -p %{buildroot}/%{_lib}/systemd/system/network.target.wants
-ln -s ../connman.service %{buildroot}/%{_lib}/systemd/system/network.target.wants/connman.service
+mkdir -p %{buildroot}/usr/lib/systemd/system/network.target.wants
+ln -s ../connman.service %{buildroot}/usr/lib/systemd/system/network.target.wants/connman.service
 
 %make_install
 
@@ -117,8 +117,8 @@ systemctl daemon-reload
 %{_sbindir}/*
 #%{_libdir}/%{name}/scripts/*
 %config %{_sysconfdir}/dbus-1/system.d/*.conf
-/%{_lib}/systemd/system/connman.service
-/%{_lib}/systemd/system/network.target.wants/connman.service
+/usr/lib/systemd/system/connman.service
+/usr/lib/systemd/system/network.target.wants/connman.service
 /var/lib/connman/settings
 
 
