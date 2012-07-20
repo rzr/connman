@@ -377,6 +377,13 @@ if (test "${enable_wifi}" != "no"); then
 						$PATH:/sbin:/usr/sbin)
 fi
 
+AC_ARG_ENABLE(linklocaladdr, AC_HELP_STRING([--disable-linklocaladdr],
+			[disable link local address when dhcp failed]), [
+	if (test "${enableval}" = "no"); then
+		CFLAGS="$CFLAGS -DDISABLE_LINK_LOCAL_ADDR"
+	fi
+])
+
 AC_ARG_ENABLE(datafiles, AC_HELP_STRING([--disable-datafiles],
 			[don't install configuration and data files]),
 					[enable_datafiles=${enableval}])
