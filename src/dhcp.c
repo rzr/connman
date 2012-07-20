@@ -471,6 +471,17 @@ static void ipv4ll_available_cb(GDHCPClient *ipv4ll_client, gpointer user_data)
 	if (!service)
 		return;
 
+#if defined DISABLE_LINK_LOCAL_ADDR
+	dhcp_invalidate(dhcp, true);
+
+	__connman_service_ipconfig_indicate_state(service,
+			CONNMAN_SERVICE_STATE_IDLE,
+			CONNMAN_IPCONFIG_TYPE_IPV4);
+	__connman_service_ipconfig_indicate_state(service,
+			CONNMAN_SERVICE_STATE_IDLE,
+			CONNMAN_IPCONFIG_TYPE_IPV6);
+	return;
+#endif
 	ipconfig = __connman_service_get_ip4config(service);
 	if (!ipconfig)
 		return;
