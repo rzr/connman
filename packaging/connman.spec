@@ -59,7 +59,7 @@ Summary:    Test Scripts for Connection Manager
 Group:      Development/Tools
 Requires:   %{name} = %{version}-%{release}
 Requires:   dbus-python
-Requires:   pygobject2
+Requires:   pygobject
 Requires:   python-xml
 
 %description test
