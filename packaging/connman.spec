@@ -7,6 +7,7 @@ License:    GPLv2
 URL:        http://connman.net/
 Source0:    %{name}-%{version}.tar.bz2
 Source1:    settings
+Source2:    main.conf
 Requires:   dbus
 Requires:   wpa_supplicant >= 0.7.1
 Requires:   bluez
@@ -91,6 +92,9 @@ Scripts for testing Connman and its functionality
 make %{?jobs:-j%jobs}
 
 %install
+mkdir -p %{buildroot}%{_sysconfdir}/connman
+install -D -m 0644 %{SOURCE2} %{buildroot}%{_sysconfdir}/connman/main.conf
+
 mkdir -p %{buildroot}/usr/lib/systemd/system/network.target.wants
 ln -s ../connman.service %{buildroot}/usr/lib/systemd/system/network.target.wants/connman.service
 
@@ -117,6 +121,7 @@ systemctl daemon-reload
 %{_sbindir}/*
 #%{_libdir}/%{name}/scripts/*
 %config %{_sysconfdir}/dbus-1/system.d/*.conf
+%config %{_sysconfdir}/connman/*.conf
 /usr/lib/systemd/system/connman.service
 /usr/lib/systemd/system/network.target.wants/connman.service
 /var/lib/connman/settings
