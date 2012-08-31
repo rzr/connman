@@ -77,8 +77,6 @@ Scripts for testing Connman and its functionality
     --enable-ofono=builtin \
     --enable-bluetooth=builtin \
     --enable-loopback=builtin \
-    --enable-dnsproxy=builtin \
-    --enable-portal=builtin \
     --enable-threads \
     --enable-test \
     --with-systemdunitdir=/usr/lib/systemd/system
