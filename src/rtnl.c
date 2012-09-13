@@ -90,16 +90,7 @@ static connman_bool_t ether_blacklisted(const char *name)
 	if (name == NULL)
 		return TRUE;
 
-	/* virtual interface from VMware */
-	if (g_str_has_prefix(name, "vmnet") == TRUE)
-		return TRUE;
-
-	/* virtual interface from VirtualBox */
-	if (g_str_has_prefix(name, "vboxnet") == TRUE)
-		return TRUE;
-
-	/* virtual interface from Virtual Machine Manager */
-	if (g_str_has_prefix(name, "virbr") == TRUE)
+	if (__connman_device_isfiltered(name) == TRUE)
 		return TRUE;
 
 	return FALSE;
@@ -1189,22 +1180,22 @@ static const char **rtnl_nd_opt_dnssl(struct nd_opt_hdr *opt, guint32 *lifetime)
 static void rtnl_newnduseropt(struct nlmsghdr *hdr)
 {
 	struct nduseroptmsg *msg = (struct nduseroptmsg *) NLMSG_DATA(hdr);
-	struct nd_opt_hdr *opt = (void *)&msg[1];
+	struct nd_opt_hdr *opt;
 	guint32 lifetime = -1;
 	const char **domains = NULL;
 	struct in6_addr *servers = NULL;
-	int nr_servers = 0;
+	int i, nr_servers = 0;
 	int msglen = msg->nduseropt_opts_len;
 	char *interface;
 
-	DBG("family %02x index %x len %04x type %02x code %02x",
-	    msg->nduseropt_family, msg->nduseropt_ifindex,
-	    msg->nduseropt_opts_len, msg->nduseropt_icmp_type,
-	    msg->nduseropt_icmp_code);
+	DBG("family %d index %d len %d type %d code %d",
+		msg->nduseropt_family, msg->nduseropt_ifindex,
+		msg->nduseropt_opts_len, msg->nduseropt_icmp_type,
+		msg->nduseropt_icmp_code);
 
 	if (msg->nduseropt_family != AF_INET6 ||
-	    msg->nduseropt_icmp_type != ND_ROUTER_ADVERT ||
-	    msg->nduseropt_icmp_code != 0)
+			msg->nduseropt_icmp_type != ND_ROUTER_ADVERT ||
+			msg->nduseropt_icmp_code != 0)
 		return;
 
 	interface = connman_inet_ifname(msg->nduseropt_ifindex);
@@ -1212,40 +1203,37 @@ static void rtnl_newnduseropt(struct nlmsghdr *hdr)
 		return;
 
 	for (opt = (void *)&msg[1];
-	     msglen >= 2 && msglen >= opt->nd_opt_len && opt->nd_opt_len;
-	     msglen -= opt->nd_opt_len,
-		     opt = ((void *)opt) + opt->nd_opt_len*8) {
+			msglen > 0;
+			msglen -= opt->nd_opt_len * 8,
+			opt = ((void *)opt) + opt->nd_opt_len*8) {
 
-		DBG("nd opt type %d len %d\n",
-		    opt->nd_opt_type, opt->nd_opt_len);
+		DBG("remaining %d nd opt type %d len %d\n",
+			msglen, opt->nd_opt_type, opt->nd_opt_len);
 
-		if (opt->nd_opt_type == 25)
+		if (opt->nd_opt_type == 25) { /* ND_OPT_RDNSS */
+			char buf[40];
+
 			servers = rtnl_nd_opt_rdnss(opt, &lifetime,
-						    &nr_servers);
-		else if (opt->nd_opt_type == 31)
-			domains = rtnl_nd_opt_dnssl(opt, &lifetime);
-	}
+								&nr_servers);
+			for (i = 0; i < nr_servers; i++) {
+				if (!inet_ntop(AF_INET6, servers + i, buf,
+								sizeof(buf)))
+					continue;
 
-	if (nr_servers) {
-		int i, j;
-		char buf[40];
-
-		for (i = 0; i < nr_servers; i++) {
-			if (!inet_ntop(AF_INET6, servers + i, buf, sizeof(buf)))
-				continue;
-
-			if (domains == NULL || domains[0] == NULL) {
 				connman_resolver_append_lifetime(interface,
 							NULL, buf, lifetime);
-				continue;
 			}
 
-			for (j = 0; domains[j]; j++)
+		} else if (opt->nd_opt_type == 31) { /* ND_OPT_DNSSL */
+			g_free(domains);
+
+			domains = rtnl_nd_opt_dnssl(opt, &lifetime);
+			for (i = 0; domains != NULL && domains[i] != NULL; i++)
 				connman_resolver_append_lifetime(interface,
-								domains[j],
-								buf, lifetime);
+						domains[i], NULL, lifetime);
 		}
 	}
+
 	g_free(domains);
 	g_free(interface);
 }
@@ -1267,6 +1255,8 @@ static const char *type2string(uint16_t type)
 		return "NEWLINK";
 	case RTM_DELLINK:
 		return "DELLINK";
+	case RTM_GETADDR:
+		return "GETADDR";
 	case RTM_NEWADDR:
 		return "NEWADDR";
 	case RTM_DELADDR:

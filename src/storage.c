@@ -58,20 +58,24 @@ static GKeyFile *storage_load(const char *pathname)
 	return keyfile;
 }
 
-static void storage_save(GKeyFile *keyfile, char *pathname)
+static int storage_save(GKeyFile *keyfile, char *pathname)
 {
 	gchar *data = NULL;
 	gsize length = 0;
 	GError *error = NULL;
+	int ret = 0;
 
 	data = g_key_file_to_data(keyfile, &length, NULL);
 
 	if (!g_file_set_contents(pathname, data, length, &error)) {
 		DBG("Failed to store information: %s", error->message);
 		g_error_free(error);
+		ret = -EIO;
 	}
 
 	g_free(data);
+
+	return ret;
 }
 
 static void storage_delete(const char *pathname)
@@ -98,17 +102,20 @@ GKeyFile *__connman_storage_load_global()
 	return keyfile;
 }
 
-void __connman_storage_save_global(GKeyFile *keyfile)
+int __connman_storage_save_global(GKeyFile *keyfile)
 {
 	gchar *pathname;
+	int ret;
 
 	pathname = g_strdup_printf("%s/%s", STORAGEDIR, SETTINGS);
 	if(pathname == NULL)
-		return;
+		return -ENOMEM;
 
-	storage_save(keyfile, pathname);
+	ret = storage_save(keyfile, pathname);
 
 	g_free(pathname);
+
+	return ret;
 }
 
 void __connman_storage_delete_global()
@@ -138,30 +145,6 @@ GKeyFile *__connman_storage_load_config(const char *ident)
 	g_free(pathname);
 
 	return keyfile;
-}
-
-void __connman_storage_save_config(GKeyFile *keyfile, const char *ident)
-{
-	gchar *pathname;
-
-	pathname = g_strdup_printf("%s/%s.config", STORAGEDIR, ident);
-	if(pathname == NULL)
-		return;
-
-	storage_save(keyfile, pathname);
-}
-
-void __connman_storage_delete_config(const char *ident)
-{
-	gchar *pathname;
-
-	pathname = g_strdup_printf("%s/%s.config", STORAGEDIR, ident);
-	if(pathname == NULL)
-		return;
-
-	storage_delete(pathname);
-
-	g_free(pathname);
 }
 
 GKeyFile *__connman_storage_open_service(const char *service_id)
@@ -249,34 +232,25 @@ GKeyFile *connman_storage_load_service(const char *service_id)
 
 	keyfile =  storage_load(pathname);
 	g_free(pathname);
-	if (keyfile)
-		return keyfile;
-
-	pathname = g_strdup_printf("%s/%s", STORAGEDIR, DEFAULT);
-	if(pathname == NULL)
-		return NULL;
-
-	keyfile =  storage_load(pathname);
-
-	g_free(pathname);
 
 	return keyfile;
 }
 
-void __connman_storage_save_service(GKeyFile *keyfile, const char *service_id)
+int __connman_storage_save_service(GKeyFile *keyfile, const char *service_id)
 {
+	int ret = 0;
 	gchar *pathname, *dirname;
 
 	dirname = g_strdup_printf("%s/%s", STORAGEDIR, service_id);
 	if(dirname == NULL)
-		return;
+		return -ENOMEM;
 
 	/* If the dir doesn't exist, create it */
 	if (!g_file_test(dirname, G_FILE_TEST_IS_DIR)) {
 		if(mkdir(dirname, MODE) < 0) {
 			if (errno != EEXIST) {
 				g_free(dirname);
-				return;
+				return -errno;
 			}
 		}
 	}
@@ -285,9 +259,74 @@ void __connman_storage_save_service(GKeyFile *keyfile, const char *service_id)
 
 	g_free(dirname);
 
-	storage_save(keyfile, pathname);
+	ret = storage_save(keyfile, pathname);
 
 	g_free(pathname);
+
+	return ret;
+}
+
+static gboolean remove_file(const char *service_id, const char *file)
+{
+	gchar *pathname;
+	gboolean ret = FALSE;
+
+	pathname = g_strdup_printf("%s/%s/%s", STORAGEDIR, service_id, file);
+	if(pathname == NULL)
+		return FALSE;
+
+	if (g_file_test(pathname, G_FILE_TEST_EXISTS) == FALSE) {
+		ret = TRUE;
+	} else if (g_file_test(pathname, G_FILE_TEST_IS_REGULAR) == TRUE) {
+		unlink(pathname);
+		ret = TRUE;
+	}
+
+	g_free(pathname);
+	return ret;
+}
+
+static gboolean remove_dir(const char *service_id)
+{
+	gchar *pathname;
+	gboolean ret = FALSE;
+
+	pathname = g_strdup_printf("%s/%s", STORAGEDIR, service_id);
+	if(pathname == NULL)
+		return FALSE;
+
+	if (g_file_test(pathname, G_FILE_TEST_EXISTS) == FALSE) {
+		ret = TRUE;
+	} else if (g_file_test(pathname, G_FILE_TEST_IS_DIR) == TRUE) {
+		rmdir(pathname);
+		ret = TRUE;
+	}
+
+	g_free(pathname);
+	return ret;
+}
+
+gboolean __connman_storage_remove_service(const char *service_id)
+{
+	gboolean removed;
+
+	/* Remove service configuration file */
+	removed = remove_file(service_id, SETTINGS);
+	if (removed == FALSE)
+		return FALSE;
+
+	/* Remove the statistics file also */
+	removed = remove_file(service_id, "data");
+	if (removed == FALSE)
+		return FALSE;
+
+	removed = remove_dir(service_id);
+	if (removed == FALSE)
+		return FALSE;
+
+	DBG("Removed service dir %s/%s", STORAGEDIR, service_id);
+
+	return TRUE;
 }
 
 GKeyFile *__connman_storage_load_provider(const char *identifier)
@@ -387,23 +426,81 @@ void __connman_storage_migrate()
 	GKeyFile *keyfile_def = NULL;
 	GKeyFile *keyfile = NULL;
 	GError *error = NULL;
+	connman_bool_t delete_old_config = TRUE;
+	char **services, **keys, *value;
+	int i, k, err;
 	connman_bool_t val;
+
+	pathname = g_strdup_printf("%s/%s", STORAGEDIR, DEFAULT);
+	if (pathname == NULL)
+		return;
 
 	/* If setting file exists, migration has been done. */
 	keyfile = __connman_storage_load_global();
 	if (keyfile) {
 		g_key_file_free(keyfile);
+		unlink(pathname);
+		g_free(pathname);
 		return;
 	}
-
-	pathname = g_strdup_printf("%s/%s", STORAGEDIR, DEFAULT);
-	if(pathname == NULL)
-		return;
 
 	/* If default.profile exists, create new settings file */
 	keyfile_def = storage_load(pathname);
 	if (keyfile_def == NULL)
 		goto done;
+
+	services = g_key_file_get_groups(keyfile_def, NULL);
+	for (i = 0; services != NULL && services[i] != NULL; i++) {
+		if (strncmp(services[i], "wifi_", 5) != 0 &&
+				strncmp(services[i], "ethernet_", 9) != 0 &&
+				strncmp(services[i], "cellular_", 9) != 0 &&
+				strncmp(services[i], "bluetooth_", 10) != 0 &&
+				strncmp(services[i], "wimax_", 6) != 0 &&
+				strncmp(services[i], "vpn_", 4) != 0)
+			continue;
+
+		keyfile = connman_storage_load_service(services[i]);
+		if (keyfile != NULL) {
+			g_key_file_free(keyfile);
+			DBG("already exists %s", services[i]);
+			continue;
+		}
+
+		keyfile = g_key_file_new();
+		if (keyfile == NULL) {
+			connman_warn("Migrating %s failed", services[i]);
+			delete_old_config = FALSE;
+			continue;
+		}
+
+		keys = g_key_file_get_keys(keyfile_def, services[i],
+				NULL, NULL);
+
+		for (k = 0; keys != NULL && keys[k] != NULL; k++) {
+			value = g_key_file_get_value(keyfile_def, services[i],
+					keys[k], NULL);
+			g_key_file_set_value(keyfile, services[i],
+					keys[k], value);
+			g_free(value);
+		}
+
+		if (keys != NULL && keys[0] != NULL) {
+			err = __connman_storage_save_service(keyfile,
+					services[i]);
+			if (err >= 0)
+				DBG("migrated %s", services[i]);
+			else {
+				connman_warn("Migrating %s failed %s",
+						services[i], strerror(-err));
+				delete_old_config = FALSE;
+			}
+		} else
+			DBG("no keys in %s", services[i]);
+
+		g_strfreev(keys);
+		g_key_file_free(keyfile);
+	}
+	g_strfreev(services);
 
 	/* Copy global settings from default.profile to settings. */
 	keyfile = g_key_file_new();
@@ -418,11 +515,19 @@ void __connman_storage_migrate()
 	g_key_file_set_boolean(keyfile, "global",
 					"OfflineMode", val);
 
+	/* Migrate Powered/Enable state key/value pairs from legacy
+	 * settings
+	 */
+
 	val = g_key_file_get_boolean(keyfile_def, "WiFi",
 					"Enable", &error);
 	if (error != NULL) {
 		g_clear_error(&error);
-		val = FALSE;
+		val = g_key_file_get_boolean(keyfile_def, "device_Wireless", "Powered", &error);
+		if (error != NULL) {
+			g_clear_error(&error);
+			val = FALSE;
+		}
 	}
 
 	g_key_file_set_boolean(keyfile, "WiFi",
@@ -432,7 +537,11 @@ void __connman_storage_migrate()
 					"Enable", &error);
 	if (error != NULL) {
 		g_clear_error(&error);
-		val = FALSE;
+		val = g_key_file_get_boolean(keyfile_def, "device_Bluetooth", "Powered", &error);
+		if (error != NULL) {
+			g_clear_error(&error);
+			val = FALSE;
+		}
 	}
 
 	g_key_file_set_boolean(keyfile, "Bluetooth",
@@ -442,7 +551,11 @@ void __connman_storage_migrate()
 					"Enable", &error);
 	if (error != NULL) {
 		g_clear_error(&error);
-		val = FALSE;
+		val = g_key_file_get_boolean(keyfile_def, "device_Ethernet", "Powered", &error);
+		if (error != NULL) {
+			g_clear_error(&error);
+			val = FALSE;
+		}
 	}
 
 	g_key_file_set_boolean(keyfile, "Wired",
@@ -452,7 +565,11 @@ void __connman_storage_migrate()
 					"Enable", &error);
 	if (error != NULL) {
 		g_clear_error(&error);
-		val = FALSE;
+		val = g_key_file_get_boolean(keyfile_def, "device_Cellular", "Powered", &error);
+		if (error != NULL) {
+			g_clear_error(&error);
+			val = FALSE;
+		}
 	}
 
 	g_key_file_set_boolean(keyfile, "Cellular",
@@ -462,18 +579,29 @@ void __connman_storage_migrate()
 					"Enable", &error);
 	if (error != NULL) {
 		g_clear_error(&error);
-		val = FALSE;
+		val = g_key_file_get_boolean(keyfile_def, "device_WiMAX", "Powered", &error);
+		if (error != NULL) {
+			g_clear_error(&error);
+			val = FALSE;
+		}
 	}
 
 	g_key_file_set_boolean(keyfile, "WiMAX",
 					"Enable", val);
 
-	__connman_storage_save_global(keyfile);
+	if (__connman_storage_save_global(keyfile) < 0) {
+		connman_warn("Migrating global config failed");
+		delete_old_config = FALSE;
+	}
 
 	g_key_file_free(keyfile);
 
 	g_key_file_free(keyfile_def);
 
+	if (delete_old_config == TRUE) {
+		DBG("migration done for %s", pathname);
+		unlink(pathname);
+	}
 done:
 	g_free(pathname);
 }

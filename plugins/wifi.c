@@ -68,6 +68,7 @@ struct hidden_params {
 	unsigned int ssid_len;
 	char *identity;
 	char *passphrase;
+	gpointer user_data;
 };
 
 /**
@@ -107,6 +108,8 @@ struct wifi_data {
 
 static GList *iface_list = NULL;
 
+static void start_autoscan(struct connman_device *device);
+
 static void handle_tethering(struct wifi_data *wifi)
 {
 	if (wifi->tethering == FALSE)
@@ -130,6 +133,9 @@ static void wifi_newlink(unsigned flags, unsigned change, void *user_data)
 {
 	struct connman_device *device = user_data;
 	struct wifi_data *wifi = connman_device_get_data(device);
+
+	if (wifi == NULL)
+		return;
 
 	DBG("index %d flags %d change %d", wifi->index, flags, change);
 
@@ -202,7 +208,7 @@ static void remove_networks(struct connman_device *device,
 	wifi->networks = NULL;
 }
 
-static void stop_autoscan(struct connman_device *device)
+static void reset_autoscan(struct connman_device *device)
 {
 	struct wifi_data *wifi = connman_device_get_data(device);
 	struct autoscan_params *autoscan;
@@ -225,6 +231,13 @@ static void stop_autoscan(struct connman_device *device)
 	connman_device_unref(device);
 }
 
+static void stop_autoscan(struct connman_device *device)
+{
+	reset_autoscan(device);
+
+	connman_device_set_scanning(device, FALSE);
+}
+
 static void wifi_remove(struct connman_device *device)
 {
 	struct wifi_data *wifi = connman_device_get_data(device);
@@ -233,8 +246,6 @@ static void wifi_remove(struct connman_device *device)
 
 	if (wifi == NULL)
 		return;
-
-	stop_autoscan(device);
 
 	iface_list = g_list_remove(iface_list, wifi);
 
@@ -394,10 +405,16 @@ static int throw_wifi_scan(struct connman_device *device,
 	struct wifi_data *wifi = connman_device_get_data(device);
 	int ret;
 
+	if (wifi == NULL)
+		return -ENODEV;
+
 	DBG("device %p %p", device, wifi->interface);
 
 	if (wifi->tethering == TRUE)
 		return 0;
+
+	if (connman_device_get_scanning(device) == TRUE)
+		return -EALREADY;
 
 	connman_device_ref(device);
 
@@ -411,25 +428,49 @@ static int throw_wifi_scan(struct connman_device *device,
 	return ret;
 }
 
-static void hidden_scan_callback(int result,
-			GSupplicantInterface *interface, void *user_data)
+static void hidden_free(struct hidden_params *hidden)
+{
+	if (hidden == NULL)
+		return;
+
+	g_free(hidden->identity);
+	g_free(hidden->passphrase);
+	g_free(hidden);
+}
+
+static void scan_callback(int result, GSupplicantInterface *interface,
+						void *user_data)
 {
 	struct connman_device *device = user_data;
+	struct wifi_data *wifi = connman_device_get_data(device);
 
-	DBG("result %d", result);
+	DBG("result %d wifi %p", result, wifi);
+
+	if (wifi != NULL && wifi->hidden != NULL) {
+		connman_network_clear_hidden(wifi->hidden->user_data);
+		hidden_free(wifi->hidden);
+		wifi->hidden = NULL;
+	}
+
+	if (result < 0)
+		connman_device_reset_scanning(device);
 
 	connman_device_set_scanning(device, FALSE);
+	start_autoscan(device);
 	connman_device_unref(device);
 }
 
-static void autoscan_scan_callback(int result,
+static void scan_callback_hidden(int result,
 			GSupplicantInterface *interface, void *user_data)
 {
 	struct connman_device *device = user_data;
 	struct wifi_data *wifi = connman_device_get_data(device);
 	int driver_max_ssids;
 
-	DBG("result %d", result);
+	DBG("result %d wifi %p", result, wifi);
+
+	if (wifi == NULL)
+		goto out;
 
 	/*
 	 * Scan hidden networks so that we can autoconnect to them.
@@ -450,7 +491,7 @@ static void autoscan_scan_callback(int result,
 						scan_params) > 0) {
 			ret = g_supplicant_interface_scan(wifi->interface,
 							scan_params,
-							hidden_scan_callback,
+							scan_callback,
 							device);
 			if (ret == 0)
 				return;
@@ -460,8 +501,7 @@ static void autoscan_scan_callback(int result,
 	}
 
 out:
-	connman_device_set_scanning(device, FALSE);
-	connman_device_unref(device);
+	scan_callback(result, interface, user_data);
 }
 
 static gboolean autoscan_timeout(gpointer data)
@@ -470,6 +510,9 @@ static gboolean autoscan_timeout(gpointer data)
 	struct wifi_data *wifi = connman_device_get_data(device);
 	struct autoscan_params *autoscan;
 	int interval;
+
+	if (wifi == NULL)
+		return FALSE;
 
 	autoscan = wifi->autoscan;
 
@@ -482,7 +525,7 @@ static gboolean autoscan_timeout(gpointer data)
 	if (autoscan->interval >= autoscan->limit)
 		interval = autoscan->limit;
 
-	throw_wifi_scan(wifi->device, autoscan_scan_callback);
+	throw_wifi_scan(wifi->device, scan_callback_hidden);
 
 set_interval:
 	DBG("interval %d", interval);
@@ -605,12 +648,12 @@ static int wifi_enable(struct connman_device *device)
 
 	DBG("device %p %p", device, wifi);
 
+	if (wifi == NULL)
+		return -ENODEV;
+
 	ret = g_supplicant_interface_create(interface, driver, NULL,
 						interface_create_callback,
 							wifi);
-        // added by chengyi.zhao
-	//	DBG("%s does not AP mode", device->network->wifi.mode);
-	DBG("%p does not AP mode", device);
 	if (ret < 0)
 		return ret;
 
@@ -622,13 +665,24 @@ static int wifi_disable(struct connman_device *device)
 	struct wifi_data *wifi = connman_device_get_data(device);
 	int ret;
 
-	DBG("device %p", device);
+	DBG("device %p wifi %p", device, wifi);
+
+	if (wifi == NULL)
+		return -ENODEV;
 
 	wifi->connected = FALSE;
 	wifi->disconnecting = FALSE;
 
 	if (wifi->pending_network != NULL)
 		wifi->pending_network = NULL;
+
+	stop_autoscan(device);
+
+	/* In case of a user scan, device is still referenced */
+	if (connman_device_get_scanning(device) == TRUE) {
+		connman_device_set_scanning(device, FALSE);
+		connman_device_unref(wifi->device);
+	}
 
 	remove_networks(device, wifi);
 
@@ -637,38 +691,6 @@ static int wifi_disable(struct connman_device *device)
 		return ret;
 
 	return -EINPROGRESS;
-}
-
-static void hidden_free(struct hidden_params *hidden)
-{
-	if (hidden == NULL)
-		return;
-
-	g_free(hidden->identity);
-	g_free(hidden->passphrase);
-	g_free(hidden);
-}
-
-static void scan_callback(int result, GSupplicantInterface *interface,
-						void *user_data)
-{
-	struct connman_device *device = user_data;
-	struct wifi_data *wifi = connman_device_get_data(device);
-
-	DBG("result %d", result);
-
-	if (wifi != NULL && wifi->hidden != NULL) {
-		hidden_free(wifi->hidden);
-		wifi->hidden = NULL;
-	}
-
-	if (result < 0)
-		connman_device_reset_scanning(device);
-
-	connman_device_set_scanning(device, FALSE);
-	connman_device_unref(device);
-
-	start_autoscan(device);
 }
 
 struct last_connected {
@@ -802,9 +824,9 @@ static int get_latest_connections(int max_ssids,
 
 static int wifi_scan(struct connman_device *device)
 {
-	stop_autoscan(device);
+	reset_autoscan(device);
 
-	return throw_wifi_scan(device, scan_callback);
+	return throw_wifi_scan(device, scan_callback_hidden);
 }
 
 static int wifi_scan_fast(struct connman_device *device)
@@ -814,10 +836,16 @@ static int wifi_scan_fast(struct connman_device *device)
 	int ret;
 	int driver_max_ssids = 0;
 
+	if (wifi == NULL)
+		return -ENODEV;
+
 	DBG("device %p %p", device, wifi->interface);
 
 	if (wifi->tethering == TRUE)
 		return 0;
+
+	if (connman_device_get_scanning(device) == TRUE)
+		return -EALREADY;
 
 	driver_max_ssids = g_supplicant_interface_get_max_scan_ssids(
 							wifi->interface);
@@ -835,9 +863,9 @@ static int wifi_scan_fast(struct connman_device *device)
 		return wifi_scan(device);
 	}
 
-	stop_autoscan(device);
-
 	connman_device_ref(device);
+	reset_autoscan(device);
+
 	ret = g_supplicant_interface_scan(wifi->interface, scan_params,
 						scan_callback, device);
 	if (ret == 0)
@@ -856,13 +884,17 @@ static int wifi_scan_fast(struct connman_device *device)
  */
 static int wifi_scan_hidden(struct connman_device *device,
 		const char *ssid, unsigned int ssid_len,
-		const char *identity, const char* passphrase)
+		const char *identity, const char* passphrase,
+		gpointer user_data)
 {
 	struct wifi_data *wifi = connman_device_get_data(device);
 	GSupplicantScanParams *scan_params = NULL;
 	struct scan_ssid *scan_ssid;
 	struct hidden_params *hidden;
 	int ret;
+
+	if (wifi == NULL)
+		return -ENODEV;
 
 	DBG("hidden SSID %s", ssid);
 
@@ -871,6 +903,9 @@ static int wifi_scan_hidden(struct connman_device *device,
 
 	if (ssid == NULL || ssid_len == 0 || ssid_len > 32)
 		return -EINVAL;
+
+	if (connman_device_get_scanning(device) == TRUE)
+		return -EALREADY;
 
 	scan_params = g_try_malloc0(sizeof(GSupplicantScanParams));
 	if (scan_params == NULL)
@@ -897,11 +932,13 @@ static int wifi_scan_hidden(struct connman_device *device,
 	hidden->ssid_len = ssid_len;
 	hidden->identity = g_strdup(identity);
 	hidden->passphrase = g_strdup(passphrase);
+	hidden->user_data = user_data;
 	wifi->hidden = hidden;
 
-	stop_autoscan(device);
-
 	connman_device_ref(device);
+
+	reset_autoscan(device);
+
 	ret = g_supplicant_interface_scan(wifi->interface, scan_params,
 			scan_callback, device);
 	if (ret == 0)
@@ -1447,7 +1484,7 @@ static void interface_removed(GSupplicantInterface *interface)
 		return;
 
 	if (wifi == NULL || wifi->device == NULL) {
-		connman_error("Wrong wifi pointer");
+		DBG("wifi interface already removed");
 		return;
 	}
 
@@ -1554,13 +1591,15 @@ static void network_added(GSupplicantNetwork *supplicant_network)
 	if (ssid != NULL)
 		connman_network_set_group(network, group);
 
-	if (wifi->hidden != NULL) {
+	if (wifi->hidden != NULL && ssid != NULL) {
 		if (wifi->hidden->ssid_len == ssid_len &&
 				memcmp(wifi->hidden->ssid, ssid,
 						ssid_len) == 0) {
 			connman_network_connect_hidden(network,
 					wifi->hidden->identity,
-					wifi->hidden->passphrase);
+					wifi->hidden->passphrase,
+					wifi->hidden->user_data);
+			wifi->hidden->user_data = NULL;
 			hidden_free(wifi->hidden);
 			wifi->hidden = NULL;
 		}

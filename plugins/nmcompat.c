@@ -220,14 +220,18 @@ static DBusMessage *property_get(DBusConnection *conn,
 						"Unsupported property");
 }
 
-static GDBusMethodTable methods[] = {
-	{ "Get", "ss",  "v",   property_get	},
+static const GDBusMethodTable methods[] = {
+	{ GDBUS_METHOD("Get",
+			GDBUS_ARGS({ "interface", "s" }, { "key", "s" }),
+			GDBUS_ARGS({ "property", "v" }), property_get) },
 	{ },
 };
 
-static GDBusSignalTable signals[] = {
-	{ "PropertiesChanged",	"a{sv}"	},
-	{ "StateChanged",	"u"	},
+static const GDBusSignalTable signals[] = {
+	{ GDBUS_SIGNAL("PropertiesChanged",
+			GDBUS_ARGS({ "properties", "a{sv}" })) },
+	{ GDBUS_SIGNAL("StateChanged",
+			GDBUS_ARGS({ "state", "u" })) },
 	{ },
 };
 

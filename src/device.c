@@ -247,12 +247,7 @@ int __connman_device_disable(struct connman_device *device)
 	}
 
 	err = device->driver->disable(device);
-	if (err == 0) {
-		connman_device_set_powered(device, FALSE);
-		goto done;
-	}
-
-	if (err == -EALREADY) {
+	if (err == 0 || err == -EALREADY) {
 		connman_device_set_powered(device, FALSE);
 		goto done;
 	}
@@ -598,13 +593,12 @@ int connman_device_set_powered(struct connman_device *device,
 
 	type = __connman_device_get_service_type(device);
 
-	if (device->powered == TRUE)
-		__connman_technology_enabled(type);
-	else
+	if (device->powered == FALSE) {
 		__connman_technology_disabled(type);
-
-	if (powered == FALSE)
 		return 0;
+	}
+
+	__connman_technology_enabled(type);
 
 	connman_device_set_disconnected(device, FALSE);
 	device->scanning = FALSE;
@@ -703,15 +697,13 @@ void __connman_device_cleanup_networks(struct connman_device *device)
 					remove_unavailable_network, NULL);
 }
 
-connman_bool_t __connman_device_scanning(struct connman_device *device)
+connman_bool_t connman_device_get_scanning(struct connman_device *device)
 {
 	return device->scanning;
 }
 
 void connman_device_reset_scanning(struct connman_device *device)
 {
-	device->scanning = FALSE;
-
 	g_hash_table_foreach(device->networks,
 				mark_network_available, NULL);
 }
@@ -1102,7 +1094,8 @@ int __connman_device_request_scan(enum connman_service_type type)
 
 int __connman_device_request_hidden_scan(struct connman_device *device,
 				const char *ssid, unsigned int ssid_len,
-				const char *identity, const char *passphrase)
+				const char *identity, const char *passphrase,
+				void *user_data)
 {
 	DBG("device %p", device);
 
@@ -1114,12 +1107,13 @@ int __connman_device_request_hidden_scan(struct connman_device *device,
 		return -EALREADY;
 
 	return device->driver->scan_hidden(device, ssid, ssid_len,
-					identity, passphrase);
+					identity, passphrase, user_data);
 }
 
 connman_bool_t __connman_device_isfiltered(const char *devname)
 {
 	char **pattern;
+	char **blacklisted_interfaces;
 
 	if (device_filter == NULL)
 		goto nodevice;
@@ -1138,11 +1132,24 @@ nodevice:
 	}
 
 	if (nodevice_filter == NULL)
-		return FALSE;
+		goto list;
 
 	for (pattern = nodevice_filter; *pattern; pattern++) {
 		if (g_pattern_match_simple(*pattern, devname) == TRUE) {
 			DBG("ignoring device %s (no match)", devname);
+			return TRUE;
+		}
+	}
+
+list:
+	blacklisted_interfaces =
+		connman_setting_get_string_list("NetworkInterfaceBlacklist");
+	if (blacklisted_interfaces == NULL)
+		return FALSE;
+
+	for (pattern = blacklisted_interfaces; *pattern; pattern++) {
+		if (g_str_has_prefix(devname, *pattern) == TRUE) {
+			DBG("ignoring device %s (blacklist)", devname);
 			return TRUE;
 		}
 	}

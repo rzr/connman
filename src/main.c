@@ -39,18 +39,27 @@
 
 #include "connman.h"
 
+#define DEFAULT_INPUT_REQUEST_TIMEOUT 120 * 1000
+#define DEFAULT_BROWSER_LAUNCH_TIMEOUT 300 * 1000
+
 static struct {
 	connman_bool_t bg_scan;
 	char **pref_timeservers;
 	unsigned int *auto_connect;
 	unsigned int *preferred_techs;
 	char **fallback_nameservers;
+	unsigned int timeout_inputreq;
+	unsigned int timeout_browserlaunch;
+	char **blacklisted_interfaces;
 } connman_settings  = {
 	.bg_scan = TRUE,
 	.pref_timeservers = NULL,
 	.auto_connect = NULL,
 	.preferred_techs = NULL,
 	.fallback_nameservers = NULL,
+	.timeout_inputreq = DEFAULT_INPUT_REQUEST_TIMEOUT,
+	.timeout_browserlaunch = DEFAULT_BROWSER_LAUNCH_TIMEOUT,
+	.blacklisted_interfaces = NULL,
 };
 
 static GKeyFile *load_config(const char *file)
@@ -106,8 +115,6 @@ static char **parse_fallback_nameservers(char **nameservers, gsize len)
 {
 	char **servers;
 	int i, j;
-	struct addrinfo hints;
-	struct addrinfo *addr;
 
 	servers = g_try_new0(char *, len + 1);
 	if (servers == NULL)
@@ -116,15 +123,10 @@ static char **parse_fallback_nameservers(char **nameservers, gsize len)
 	i = 0;
 	j = 0;
 	while (nameservers[i] != NULL) {
-		memset(&hints, 0, sizeof(struct addrinfo));
-		hints.ai_flags = AI_NUMERICHOST;
-		addr = NULL;
-		if (getaddrinfo(nameservers[i], NULL, &hints, &addr) == 0) {
+		if (connman_inet_check_ipaddress(nameservers[i]) > 0) {
 			servers[j] = g_strdup(nameservers[i]);
 			j += 1;
 		}
-
-		freeaddrinfo(addr);
 		i += 1;
 	}
 
@@ -136,18 +138,27 @@ static void parse_config(GKeyFile *config)
 	GError *error = NULL;
 	gboolean boolean;
 	char **timeservers;
+	char **interfaces;
 	char **str_list;
 	gsize len;
-	char *default_auto_connect[] = {
+	static char *default_auto_connect[] = {
 		"wifi",
 		"ethernet",
 		"cellular",
 		NULL
 	};
+	static char *default_blacklist[] = {
+		"vmnet",
+		"vboxnet",
+		"virbr",
+		NULL
+	};
+	int timeout;
 
 	if (config == NULL) {
 		connman_settings.auto_connect =
 			parse_service_types(default_auto_connect, 3);
+		connman_settings.blacklisted_interfaces = default_blacklist;
 		return;
 	}
 
@@ -200,6 +211,30 @@ static void parse_config(GKeyFile *config)
 			parse_fallback_nameservers(str_list, len);
 
 	g_strfreev(str_list);
+
+	g_clear_error(&error);
+
+	timeout = g_key_file_get_integer(config, "General",
+			"InputRequestTimeout", &error);
+	if (error == NULL && timeout >= 0)
+		connman_settings.timeout_inputreq = timeout * 1000;
+
+	g_clear_error(&error);
+
+	timeout = g_key_file_get_integer(config, "General",
+			"BrowserLaunchTimeout", &error);
+	if (error == NULL && timeout >= 0)
+		connman_settings.timeout_browserlaunch = timeout * 1000;
+
+	g_clear_error(&error);
+
+	interfaces = g_key_file_get_string_list(config, "General",
+			"NetworkInterfaceBlacklist", &len, &error);
+
+	if (error == NULL)
+		connman_settings.blacklisted_interfaces = interfaces;
+	else
+		connman_settings.blacklisted_interfaces = default_blacklist;
 
 	g_clear_error(&error);
 }
@@ -360,6 +395,9 @@ char **connman_setting_get_string_list(const char *key)
 	if (g_str_equal(key, "FallbackNameservers") == TRUE)
 		return connman_settings.fallback_nameservers;
 
+	if (g_str_equal(key, "NetworkInterfaceBlacklist") == TRUE)
+		return connman_settings.blacklisted_interfaces;
+
 	return NULL;
 }
 
@@ -372,6 +410,14 @@ unsigned int *connman_setting_get_uint_list(const char *key)
 		return connman_settings.preferred_techs;
 
 	return NULL;
+}
+
+unsigned int connman_timeout_input_request(void) {
+	return connman_settings.timeout_inputreq;
+}
+
+unsigned int connman_timeout_browser_launch(void) {
+	return connman_settings.timeout_browserlaunch;
 }
 
 int main(int argc, char *argv[])

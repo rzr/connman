@@ -48,6 +48,9 @@ struct connman_config_service {
 	char *private_key_passphrase_type;
 	char *phase2;
 	char *passphrase;
+	GSList *service_identifiers;
+	char *config_ident; /* file prefix */
+	char *config_entry; /* entry name */
 };
 
 struct connman_config {
@@ -65,6 +68,7 @@ static int inotify_wd = -1;
 
 static GIOChannel *inotify_channel = NULL;
 static uint inotify_watch = 0;
+static connman_bool_t cleanup = FALSE;
 
 #define INTERNAL_CONFIG_PREFIX           "__internal"
 
@@ -125,26 +129,53 @@ static void unregister_config(gpointer data)
 
 static void unregister_service(gpointer data)
 {
-	struct connman_config_service *service = data;
+	struct connman_config_service *config_service = data;
+	struct connman_service *service;
+	char *service_id;
+	GSList *list;
 
-	connman_info("Removing service configuration %s", service->ident);
+	if (cleanup == TRUE)
+		goto free_only;
 
-	protected_services = g_slist_remove(protected_services, service);
+	connman_info("Removing service configuration %s",
+						config_service->ident);
 
-	g_free(service->ident);
-	g_free(service->type);
-	g_free(service->name);
-	g_free(service->ssid);
-	g_free(service->eap);
-	g_free(service->identity);
-	g_free(service->ca_cert_file);
-	g_free(service->client_cert_file);
-	g_free(service->private_key_file);
-	g_free(service->private_key_passphrase);
-	g_free(service->private_key_passphrase_type);
-	g_free(service->phase2);
-	g_free(service->passphrase);
-	g_free(service);
+	protected_services = g_slist_remove(protected_services,
+						config_service);
+
+	for (list = config_service->service_identifiers; list != NULL;
+							list = list->next) {
+		service_id = list->data;
+
+		service = __connman_service_lookup_from_ident(service_id);
+		if (service != NULL) {
+			__connman_service_set_immutable(service, FALSE);
+			__connman_service_remove(service);
+		}
+
+		if (__connman_storage_remove_service(service_id) == FALSE)
+			DBG("Could not remove all files for service %s",
+								service_id);
+	}
+
+free_only:
+	g_free(config_service->ident);
+	g_free(config_service->type);
+	g_free(config_service->name);
+	g_free(config_service->ssid);
+	g_free(config_service->eap);
+	g_free(config_service->identity);
+	g_free(config_service->ca_cert_file);
+	g_free(config_service->client_cert_file);
+	g_free(config_service->private_key_file);
+	g_free(config_service->private_key_passphrase);
+	g_free(config_service->private_key_passphrase_type);
+	g_free(config_service->phase2);
+	g_free(config_service->passphrase);
+	g_slist_free_full(config_service->service_identifiers, g_free);
+	g_free(config_service->config_ident);
+	g_free(config_service->config_entry);
+	g_free(config_service);
 }
 
 static void check_keys(GKeyFile *keyfile, const char *group,
@@ -258,7 +289,13 @@ static int load_service(GKeyFile *keyfile, const char *group,
 		}
 
 		for (i = 0; i < hex_ssid_len; i += 2) {
-			sscanf(hex_ssid + i, "%02x", &hex);
+			if (sscanf(hex_ssid + i, "%02x", &hex) <= 0) {
+				connman_warn("Invalid SSID %s", hex_ssid);
+				g_free(ssid);
+				g_free(hex_ssid);
+				err = -EILSEQ;
+				goto err;
+			}
 			ssid[j++] = hex;
 		}
 
@@ -346,6 +383,9 @@ static int load_service(GKeyFile *keyfile, const char *group,
 		g_free(service->passphrase);
 		service->passphrase = str;
 	}
+
+	service->config_ident = g_strdup(config->ident);
+	service->config_entry = g_strdup_printf("service_%s", service->ident);
 
 	if (service_created)
 		g_hash_table_insert(config->service_table, service->ident,
@@ -453,62 +493,6 @@ static struct connman_config *create_config(const char *ident)
 	connman_info("Adding configuration %s", config->ident);
 
 	return config;
-}
-
-int __connman_config_load_service(GKeyFile *keyfile, const char *group,
-					connman_bool_t persistent)
-{
-	struct connman_config *config;
-	const char *service_name;
-	char *ident, *content = NULL;
-	gsize content_length;
-	int err;
-
-	service_name = group + strlen("service_");
-	ident = g_strdup_printf("%s_%s", INTERNAL_CONFIG_PREFIX, service_name);
-	if (ident == NULL)
-		return -ENOMEM;
-
-	DBG("ident %s", ident);
-
-	config = g_hash_table_lookup(config_table, ident);
-	if (config == NULL) {
-		config = create_config(ident);
-		if (config == NULL) {
-			err = -ENOMEM;
-			goto out;
-		}
-
-		config->protected = FALSE;
-	}
-
-	err = load_service(keyfile, group, config);
-	if (persistent == FALSE || err < 0)
-		goto out;
-
-	g_key_file_set_string(keyfile, "global", CONFIG_KEY_NAME,
-							service_name);
-	g_key_file_set_string(keyfile, "global", CONFIG_KEY_DESC,
-						"Internal Config File");
-	g_key_file_set_boolean(keyfile, "global", CONFIG_KEY_PROT, FALSE);
-
-	content = g_key_file_to_data(keyfile, &content_length, NULL);
-	if (content == NULL) {
-		err = -EIO;
-		goto out;
-	}
-
-	DBG("Saving %zu bytes to %s", content_length, service_name);
-
-	__connman_storage_save_config(keyfile, ident);
-
-	return 0;
-
-out:
-	g_free(ident);
-	g_free(content);
-
-	return err;
 }
 
 static connman_bool_t validate_ident(const char *ident)
@@ -645,9 +629,20 @@ static gboolean inotify_data(GIOChannel *channel, GIOCondition cond,
 
 			config = g_hash_table_lookup(config_table, ident);
 			if (config != NULL) {
+				int ret;
+
 				g_hash_table_remove_all(config->service_table);
 				load_config(config);
-				__connman_service_provision_changed(ident);
+				ret = __connman_service_provision_changed(ident);
+				if (ret > 0) {
+					/*
+					 * Re-scan the config file for any
+					 * changes
+					 */
+					g_hash_table_remove_all(config->service_table);
+					load_config(config);
+					__connman_service_provision_changed(ident);
+				}
 			}
 		}
 
@@ -733,10 +728,14 @@ void __connman_config_cleanup(void)
 {
 	DBG("");
 
+	cleanup = TRUE;
+
 	remove_watch();
 
 	g_hash_table_destroy(config_table);
 	config_table = NULL;
+
+	cleanup = FALSE;
 }
 
 static char *config_pem_fsid(const char *pem_file)
@@ -764,7 +763,7 @@ static void provision_service(gpointer key, gpointer value, gpointer user_data)
 	struct connman_service *service = user_data;
 	struct connman_config_service *config = value;
 	struct connman_network *network;
-	const void *ssid;
+	const void *ssid, *service_id;
 	unsigned int ssid_len;
 
 	/* For now only WiFi service entries are supported */
@@ -789,9 +788,17 @@ static void provision_service(gpointer key, gpointer value, gpointer user_data)
 	if (memcmp(config->ssid, ssid, ssid_len) != 0)
 		return;
 
+	service_id = __connman_service_get_ident(service);
+	config->service_identifiers =
+		g_slist_prepend(config->service_identifiers,
+				g_strdup(service_id));
+
 	__connman_service_set_immutable(service, TRUE);
 
-	__connman_service_set_favorite(service, TRUE);
+	__connman_service_set_favorite_delayed(service, TRUE, TRUE);
+
+	__connman_service_set_config(service, config->config_ident,
+						config->config_entry);
 
 	if (config->eap != NULL)
 		__connman_service_set_string(service, "EAP", config->eap);
@@ -841,6 +848,10 @@ static void provision_service(gpointer key, gpointer value, gpointer user_data)
 
 	if (config->passphrase != NULL)
 		__connman_service_set_string(service, "Passphrase", config->passphrase);
+
+	__connman_service_mark_dirty();
+
+	__connman_service_save(service);
 }
 
 int __connman_config_provision_service(struct connman_service *service)
@@ -869,10 +880,11 @@ int __connman_config_provision_service(struct connman_service *service)
 }
 
 int __connman_config_provision_service_ident(struct connman_service *service,
-							const char *ident)
+			const char *ident, const char *file, const char *entry)
 {
 	enum connman_service_type type;
 	struct connman_config *config;
+	int ret = 0;
 
 	DBG("service %p", service);
 
@@ -882,9 +894,47 @@ int __connman_config_provision_service_ident(struct connman_service *service,
 		return -ENOSYS;
 
 	config = g_hash_table_lookup(config_table, ident);
-	if(config != NULL)
+	if(config != NULL) {
+		GHashTableIter iter;
+		gpointer value, key;
+		gboolean found = FALSE;
+
+		g_hash_table_iter_init(&iter, config->service_table);
+
+		/*
+		 * Check if we need to remove individual service if it
+		 * is missing from config file.
+		 */
+		if (file != NULL && entry != NULL) {
+			while (g_hash_table_iter_next(&iter, &key,
+							&value) == TRUE) {
+				struct connman_config_service *config = value;
+
+				if (g_strcmp0(config->config_ident,
+								file) == 0 &&
+						g_strcmp0(config->config_entry,
+								entry) == 0) {
+					found = TRUE;
+					break;
+				}
+			}
+
+			DBG("found %d ident %s file %s entry %s", found, ident,
+								file, entry);
+
+			if (found == FALSE) {
+				/*
+				 * The entry+8 will skip "service_" prefix
+				 */
+				g_hash_table_remove(config->service_table,
+						entry + 8);
+				ret = 1;
+			}
+		}
+
 		g_hash_table_foreach(config->service_table,
 						provision_service, service);
+	}
 
-	return 0;
+	return ret;
 }

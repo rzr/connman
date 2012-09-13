@@ -82,6 +82,7 @@ int connman_device_set_powered(struct connman_device *device,
 						connman_bool_t powered);
 int connman_device_set_scanning(struct connman_device *device,
 						connman_bool_t scanning);
+connman_bool_t connman_device_get_scanning(struct connman_device *device);
 void connman_device_reset_scanning(struct connman_device *device);
 
 int connman_device_set_disconnected(struct connman_device *device,
@@ -119,7 +120,8 @@ struct connman_device_driver {
 	int (*scan_fast) (struct connman_device *device);
 	int (*scan_hidden)(struct connman_device *device,
 			const char *ssid, unsigned int ssid_len,
-			const char *identity, const char* passphrase);
+			const char *identity, const char* passphrase,
+			void *user_data);
 };
 
 int connman_device_driver_register(struct connman_device_driver *driver);

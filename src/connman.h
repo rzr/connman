@@ -147,6 +147,9 @@ typedef void (*__connman_inet_rs_cb_t) (struct nd_router_advert *reply,
 
 int __connman_inet_ipv6_send_rs(int index, int timeout,
 			__connman_inet_rs_cb_t callback, void *user_data);
+
+int __connman_refresh_rs_ipv6(struct connman_network *network, int index);
+
 GSList *__connman_inet_ipv6_get_prefixes(struct nd_router_advert *hdr,
 					unsigned int length);
 
@@ -201,18 +204,17 @@ int __connman_resolver_redo_servers(const char *interface);
 void __connman_storage_migrate(void);
 GKeyFile *__connman_storage_open_global();
 GKeyFile *__connman_storage_load_global();
-void __connman_storage_save_global(GKeyFile *keyfile);
+int __connman_storage_save_global(GKeyFile *keyfile);
 void __connman_storage_delete_global();
 
 GKeyFile *__connman_storage_load_config(const char *ident);
-void __connman_storage_save_config(GKeyFile *keyfile, const char *ident);
-void __connman_storage_delete_config(const char *ident);
 
 GKeyFile *__connman_storage_open_service(const char *ident);
-void __connman_storage_save_service(GKeyFile *keyfile, const char *ident);
+int __connman_storage_save_service(GKeyFile *keyfile, const char *ident);
 GKeyFile *__connman_storage_load_provider(const char *identifier);
 void __connman_storage_save_provider(GKeyFile *keyfile, const char *identifier);
 char **__connman_storage_get_providers(void);
+gboolean __connman_storage_remove_service(const char *service_id);
 
 int __connman_detect_init(void);
 void __connman_detect_cleanup(void);
@@ -468,7 +470,8 @@ struct connman_device *__connman_device_find_device(enum connman_service_type ty
 int __connman_device_request_scan(enum connman_service_type type);
 int __connman_device_request_hidden_scan(struct connman_device *device,
 				const char *ssid, unsigned int ssid_len,
-				const char *identity, const char *passphrase);
+				const char *identity, const char *passphrase,
+				gpointer user_data);
 
 connman_bool_t __connman_device_isfiltered(const char *devname);
 
@@ -483,8 +486,6 @@ void __connman_device_cleanup_networks(struct connman_device *device);
 int __connman_device_enable(struct connman_device *device);
 int __connman_device_disable(struct connman_device *device);
 int __connman_device_disconnect(struct connman_device *device);
-
-connman_bool_t __connman_device_scanning(struct connman_device *device);
 
 connman_bool_t __connman_device_has_driver(struct connman_device *device);
 
@@ -525,7 +526,7 @@ void __connman_config_cleanup(void);
 int __connman_config_load_service(GKeyFile *keyfile, const char *group, connman_bool_t persistent);
 int __connman_config_provision_service(struct connman_service *service);
 int __connman_config_provision_service_ident(struct connman_service *service,
-							const char *ident);
+		const char *ident, const char *file, const char *entry);
 
 int __connman_tethering_init(void);
 void __connman_tethering_cleanup(void);
@@ -565,6 +566,7 @@ void __connman_service_list_struct(DBusMessageIter *iter);
 
 struct connman_service *__connman_service_lookup_from_network(struct connman_network *network);
 struct connman_service *__connman_service_lookup_from_index(int index);
+struct connman_service *__connman_service_lookup_from_ident(const char *identifier);
 struct connman_service *__connman_service_create_from_network(struct connman_network *network);
 struct connman_service *__connman_service_create_from_provider(struct connman_provider *provider);
 struct connman_service *__connman_service_get_default(void);
@@ -594,6 +596,9 @@ const char *__connman_service_get_phase2(struct connman_service *service);
 connman_bool_t __connman_service_wps_enabled(struct connman_service *service);
 int __connman_service_set_favorite(struct connman_service *service,
 						connman_bool_t favorite);
+int __connman_service_set_favorite_delayed(struct connman_service *service,
+					connman_bool_t favorite,
+					gboolean delay_ordering);
 int __connman_service_set_immutable(struct connman_service *service,
 						connman_bool_t immutable);
 void __connman_service_set_userconnect(struct connman_service *service,
@@ -619,8 +624,16 @@ int __connman_service_connect(struct connman_service *service);
 int __connman_service_disconnect(struct connman_service *service);
 int __connman_service_disconnect_all(void);
 void __connman_service_auto_connect(void);
+gboolean __connman_service_remove(struct connman_service *service);
+void __connman_service_set_hidden_data(struct connman_service *service,
+				gpointer user_data);
+void __connman_service_return_error(struct connman_service *service,
+				int error, gpointer user_data);
+void __connman_service_reply_dbus_pending(DBusMessage *pending, int error);
 
-void __connman_service_provision_changed(const char *ident);
+int __connman_service_provision_changed(const char *ident);
+void __connman_service_set_config(struct connman_service *service,
+				const char *file_id, const char *section);
 
 const char *__connman_service_type2string(enum connman_service_type type);
 enum connman_service_type __connman_service_string2type(const char *str);
@@ -659,6 +672,7 @@ void __connman_service_set_agent_identity(struct connman_service *service,
 						const char *agent_identity);
 int __connman_service_set_passphrase(struct connman_service *service,
 					const char *passphrase);
+const char *__connman_service_get_passphrase(struct connman_service *service);
 void __connman_service_set_agent_passphrase(struct connman_service *service,
 						const char *agent_passphrase);
 
@@ -687,6 +701,8 @@ GSequence *__connman_service_get_list(struct connman_session *session,
 
 void __connman_service_session_inc(struct connman_service *service);
 connman_bool_t __connman_service_session_dec(struct connman_service *service);
+void __connman_service_mark_dirty();
+void __connman_service_save(struct connman_service *service);
 
 #include <connman/notifier.h>
 

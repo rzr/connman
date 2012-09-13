@@ -386,7 +386,7 @@ static void xml_wispr_parser_callback(const char *str, gpointer user_data)
 	result = g_markup_parse_context_parse(parser_context,
 					str, strlen(str), NULL);
 	if (result == TRUE)
-		result = g_markup_parse_context_end_parse(parser_context, NULL);
+		g_markup_parse_context_end_parse(parser_context, NULL);
 
 	g_markup_parse_context_free(parser_context);
 }
@@ -610,7 +610,7 @@ static gboolean wispr_manage_message(GWebResult *result,
 
 		if (__connman_agent_request_login_input(wp_context->service,
 					wispr_portal_request_wispr_login,
-					wp_context) != -EIO)
+					wp_context) != -EINPROGRESS)
 			wispr_portal_error(wp_context);
 
 		break;
@@ -692,8 +692,9 @@ static gboolean wispr_portal_web_result(GWebResult *result, gpointer user_data)
 
 		break;
 	case 302:
-		if (g_web_result_get_header(result, "Location",
-						&redirect) == FALSE) {
+		if (g_web_supports_tls() == FALSE ||
+				g_web_result_get_header(result, "Location",
+							&redirect) == FALSE) {
 			__connman_agent_request_browser(wp_context->service,
 					wispr_portal_browser_reply_cb,
 					wp_context->status_url, wp_context);

@@ -5,10 +5,13 @@ Service		net.connman
 Interface	net.connman.Technology
 Object path	[variable prefix]/{technology0,technology1,...}
 
-Methods		dict GetProperties()
+Methods		dict GetProperties()  [deprecated]
 
 			Returns properties for the technology object. See
 			the properties section for available properties.
+
+			Usage of this method is highly discouraged. Use
+			the Manager.GetTechnologies() method instead.
 
 			Possible Errors: [service].Error.InvalidArguments
 
@@ -26,7 +29,9 @@ Methods		dict GetProperties()
 
 			Trigger a scan for this specific technology. The
 			method call will return when a scan has been
-			finished and results are available.
+			finished and results are available. So setting
+			a longer D-Bus timeout might be a really good
+			idea.
 
 			Results will be signaled via the ServicesChanged
 			signal from the manager interface.

@@ -162,10 +162,12 @@ vpn_exit:
 						CONNMAN_PROVIDER_STATE_IDLE);
 
 	connman_provider_set_index(provider, -1);
-	connman_provider_unref(data->provider);
 
-	g_free(data->if_name);
-	g_free(data);
+	if (data != NULL) {
+		connman_provider_unref(data->provider);
+		g_free(data->if_name);
+		g_free(data);
+	}
 
 	connman_task_destroy(task);
 }
@@ -351,9 +353,12 @@ static int vpn_connect(struct connman_provider *provider)
 
 	vpn_driver_data = g_hash_table_lookup(driver_hash, name);
 
-	if (vpn_driver_data != NULL && vpn_driver_data->vpn_driver != NULL &&
-		vpn_driver_data->vpn_driver->flags != VPN_FLAG_NO_TUN) {
+	if (vpn_driver_data == NULL || vpn_driver_data->vpn_driver == NULL) {
+		ret = -EINVAL;
+		goto exist_err;
+	}
 
+	if (vpn_driver_data->vpn_driver->flags != VPN_FLAG_NO_TUN) {
 		ret = vpn_create_tun(provider);
 		if (ret < 0)
 			goto exist_err;

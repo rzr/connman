@@ -1126,7 +1126,6 @@ static int ipv4ll_recv_arp_packet(GDHCPClient *dhcp_client)
 	int target_conflict;
 
 	memset(&arp, 0, sizeof(arp));
-	bytes = 0;
 	bytes = read(dhcp_client->listener_sockfd, &arp, sizeof(arp));
 	if (bytes < 0)
 		return bytes;
@@ -1853,7 +1852,7 @@ static gboolean listener_event(GIOChannel *channel, GIOCondition condition,
 			re = dhcp_recv_l3_packet(&packet,
 						dhcp_client->listener_sockfd);
 	} else if (dhcp_client->listen_mode == L_ARP) {
-		re = ipv4ll_recv_arp_packet(dhcp_client);
+		ipv4ll_recv_arp_packet(dhcp_client);
 		return TRUE;
 	}
 	else
@@ -1866,6 +1865,9 @@ static gboolean listener_event(GIOChannel *channel, GIOCondition condition,
 		return TRUE;
 
 	if (dhcp_client->type == G_DHCP_IPV6) {
+		if (packet6 == NULL)
+			return TRUE;
+
 		count = 0;
 		client_id = dhcpv6_get_option(packet6, pkt_len,
 				G_DHCPV6_CLIENTID, &option_len,	&count);
@@ -1898,8 +1900,11 @@ static gboolean listener_event(GIOChannel *channel, GIOCondition condition,
 		} else
 			dhcp_client->status_code = 0;
 
-	} else
+	} else {
 		message_type = dhcp_get_option(&packet, DHCP_MESSAGE_TYPE);
+		if (message_type == NULL)
+			return TRUE;
+	}
 
 	if (message_type == NULL && client_id == NULL)
 		/* No message type / client id option, ignore package */

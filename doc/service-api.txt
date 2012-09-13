@@ -5,10 +5,13 @@ Service		net.connman
 Interface	net.connman.Service
 Object path	[variable prefix]/{service0,service1,...}
 
-Methods		dict GetProperties()
+Methods		dict GetProperties()  [deprecated]
 
 			Returns properties for the service object. See
 			the properties section for available properties.
+
+			Usage of this method is highly discouraged. Use
+			the Manager.GetServices() method instead.
 
 			Possible Errors: [service].Error.InvalidArguments
 
@@ -147,10 +150,11 @@ Properties	string State [readonly]
 			The service name (for example "Wireless" etc.)
 
 			This name can be used for directly displaying it in
-			the application. It has pure informational purpose.
+			the application. It has pure informational purpose
+			and no attempt should be made to translate it.
 
-			For Ethernet devices and hidden WiFi networks it is
-			not guaranteed that this property is present.
+			For Ethernet devices and hidden WiFi networks this
+			property is not present.
 
 		string Type [readonly]
 
@@ -159,6 +163,9 @@ Properties	string State [readonly]
 			This information should only be used to determine
 			advanced properties or showing the correct icon
 			to the user.
+
+			Together with a missing Name property, this can
+			be used to identify hidden WiFi networks.
 
 		array{string} Security [readonly]
 
@@ -275,7 +282,9 @@ Properties	string State [readonly]
 
 		array{string} Domains [readonly]
 
-			The list of currently used search domains.
+			The list of currently used search domains taken
+			from Domains.Configurations if set, otherwise a
+			domain name if provided by DHCP or VPNs.
 
 		array{string} Domains.Configuration [readwrite]
 

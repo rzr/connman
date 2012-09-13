@@ -36,11 +36,18 @@
 
 #define RESOLVER_FLAG_PUBLIC (1 << 0)
 
+/*
+ * Threshold for RDNSS lifetime. Will be used to trigger RS
+ * before RDNSS entries actually expire
+ */
+#define RESOLVER_LIFETIME_REFRESH_THRESHOLD 0.8
+
 struct entry_data {
 	char *interface;
 	char *domain;
 	char *server;
 	unsigned int flags;
+	unsigned int lifetime;
 	guint timeout;
 };
 
@@ -253,11 +260,47 @@ static gboolean resolver_expire_cb(gpointer user_data)
 	return FALSE;
 }
 
+static gboolean resolver_refresh_cb(gpointer user_data)
+{
+	struct entry_data *entry = user_data;
+	int index;
+	unsigned int interval;
+	struct connman_service *service = NULL;
+
+	/* Round up what we have left from lifetime */
+	interval = entry->lifetime *
+		(1 - RESOLVER_LIFETIME_REFRESH_THRESHOLD) + 1.0;
+
+	DBG("RDNSS start interface %s domain %s "
+			"server %s remaining lifetime %d",
+			entry->interface, entry->domain,
+			entry->server, interval);
+
+	entry->timeout = g_timeout_add_seconds(interval,
+			resolver_expire_cb, entry);
+
+	index = connman_inet_ifindex(entry->interface);
+	if (index >= 0) {
+		service = __connman_service_lookup_from_index(index);
+		if (service != NULL) {
+			/*
+			 * Send Router Solicitation to refresh RDNSS entries
+			 * before their lifetime expires
+			 */
+			__connman_refresh_rs_ipv6(
+					__connman_service_get_network(service),
+					index);
+		}
+	}
+	return FALSE;
+}
+
 static int append_resolver(const char *interface, const char *domain,
 				const char *server, unsigned int lifetime,
 							unsigned int flags)
 {
 	struct entry_data *entry;
+	unsigned int interval;
 
 	DBG("interface %s domain %s server %s lifetime %d flags %d",
 				interface, domain, server, lifetime, flags);
@@ -273,17 +316,24 @@ static int append_resolver(const char *interface, const char *domain,
 	entry->domain = g_strdup(domain);
 	entry->server = g_strdup(server);
 	entry->flags = flags;
+	entry->lifetime = lifetime;
 	if (lifetime) {
 		int index;
-		entry->timeout = g_timeout_add_seconds(lifetime,
-						resolver_expire_cb, entry);
+		interval = lifetime * RESOLVER_LIFETIME_REFRESH_THRESHOLD;
+
+		DBG("RDNSS start interface %s domain %s "
+				"server %s lifetime threshold %d",
+				interface, domain, server, interval);
+
+		entry->timeout = g_timeout_add_seconds(interval,
+				resolver_refresh_cb, entry);
 
 		/*
 		 * We update the service only for those nameservers
 		 * that are automagically added via netlink (lifetime > 0)
 		 */
 		index = connman_inet_ifindex(interface);
-		if (index >= 0) {
+		if (server != NULL && index >= 0) {
 			struct connman_service *service;
 			service = __connman_service_lookup_from_index(index);
 			if (service != NULL)
@@ -312,7 +362,7 @@ static int append_resolver(const char *interface, const char *domain,
 int connman_resolver_append(const char *interface, const char *domain,
 						const char *server)
 {
-	GSList *list, *matches = NULL;
+	GSList *list;
 
 	DBG("interface %s domain %s server %s", interface, domain, server);
 
@@ -322,17 +372,14 @@ int connman_resolver_append(const char *interface, const char *domain,
 	for (list = entry_list; list; list = list->next) {
 		struct entry_data *entry = list->data;
 
-		if (entry->timeout > 0 ||
-				g_strcmp0(entry->interface, interface) != 0 ||
-				g_strcmp0(entry->domain, domain) != 0 ||
-				g_strcmp0(entry->server, server) != 0)
+		if (entry->timeout > 0)
 			continue;
 
-		matches = g_slist_append(matches, entry);
+		if (g_strcmp0(entry->interface, interface) == 0 &&
+				g_strcmp0(entry->domain, domain) == 0 &&
+				g_strcmp0(entry->server, server) == 0)
+			return -EEXIST;
 	}
-
-	if (matches != NULL)
-		remove_entries(matches);
 
 	return append_resolver(interface, domain, server, 0, 0);
 }
@@ -350,20 +397,21 @@ int connman_resolver_append_lifetime(const char *interface, const char *domain,
 				const char *server, unsigned int lifetime)
 {
 	GSList *list;
+	unsigned int interval;
 
 	DBG("interface %s domain %s server %s lifetime %d",
 				interface, domain, server, lifetime);
 
-	if (server == NULL)
+	if (server == NULL && domain == NULL)
 		return -EINVAL;
 
 	for (list = entry_list; list; list = list->next) {
 		struct entry_data *entry = list->data;
 
-		if (!entry->timeout ||
-				g_strcmp0(entry->interface, interface) ||
-				g_strcmp0(entry->domain, domain) ||
-				g_strcmp0(entry->server, server))
+		if (entry->timeout == 0 ||
+				g_strcmp0(entry->interface, interface) != 0 ||
+				g_strcmp0(entry->domain, domain) != 0 ||
+				g_strcmp0(entry->server, server) != 0)
 			continue;
 
 		g_source_remove(entry->timeout);
@@ -373,8 +421,14 @@ int connman_resolver_append_lifetime(const char *interface, const char *domain,
 			return 0;
 		}
 
-		entry->timeout = g_timeout_add_seconds(lifetime,
-						resolver_expire_cb, entry);
+		interval = lifetime * RESOLVER_LIFETIME_REFRESH_THRESHOLD;
+
+		DBG("RDNSS start interface %s domain %s "
+				"server %s lifetime threshold %d",
+				interface, domain, server, interval);
+
+		entry->timeout = g_timeout_add_seconds(interval,
+				resolver_refresh_cb, entry);
 		return 0;
 	}
 
@@ -396,23 +450,20 @@ int connman_resolver_remove(const char *interface, const char *domain,
 
 	DBG("interface %s domain %s server %s", interface, domain, server);
 
-	if (server == NULL)
-		return -EINVAL;
-
 	for (list = entry_list; list; list = list->next) {
 		struct entry_data *entry = list->data;
 
-		if (interface != NULL &&
-				g_strcmp0(entry->interface, interface) != 0)
+		if (g_strcmp0(entry->interface, interface) != 0)
 			continue;
 
-		if (domain != NULL && g_strcmp0(entry->domain, domain) != 0)
+		if (g_strcmp0(entry->domain, domain) != 0)
 			continue;
 
 		if (g_strcmp0(entry->server, server) != 0)
 			continue;
 
 		matches = g_slist_append(matches, entry);
+		break;
 	}
 
 	if (matches == NULL)
@@ -493,6 +544,13 @@ int __connman_resolver_redo_servers(const char *interface)
 		 */
 		__connman_dnsproxy_remove(entry->interface, entry->domain,
 					entry->server);
+		/*
+		 * Remove also the resolver timer for the old server entry.
+		 * A new timer will be set for the new server entry
+		 * when the next Router Advertisement message arrives
+		 * with RDNSS/DNSSL settings.
+		 */
+		g_source_remove(entry->timeout);
 
 		__connman_dnsproxy_append(entry->interface, entry->domain,
 					entry->server);

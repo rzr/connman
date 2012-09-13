@@ -65,7 +65,6 @@ static void save_timeservers(char **servers)
 static char **load_timeservers()
 {
 	GKeyFile *keyfile;
-	GError *error = NULL;
 	char **servers = NULL;
 
 	keyfile = __connman_storage_load_global();
@@ -73,11 +72,7 @@ static char **load_timeservers()
 		return NULL;
 
 	servers = g_key_file_get_string_list(keyfile, "global",
-						"Timeservers", NULL, &error);
-	if (error) {
-		DBG("Error loading timeservers: %s", error->message);
-		g_error_free(error);
-	}
+						"Timeservers", NULL, NULL);
 
 	g_key_file_free(keyfile);
 
@@ -115,9 +110,6 @@ static void resolv_result(GResolvResultStatus status, char **results, gpointer u
 void __connman_timeserver_sync_next()
 {
 	char *server;
-	int ret;
-	struct addrinfo hints;
-	struct addrinfo *addr;
 
 	__connman_ntp_stop();
 
@@ -129,15 +121,8 @@ void __connman_timeserver_sync_next()
 
 	ts_list = g_slist_delete_link(ts_list, ts_list);
 
-	memset(&hints, 0, sizeof(struct addrinfo));
-	hints.ai_flags = AI_NUMERICHOST;
-	addr = NULL;
-
-	ret = getaddrinfo(server, NULL, &hints, &addr);
-	freeaddrinfo(addr);
-
 	/* if its a IP , directly query it. */
-	if (ret == 0) {
+	if (connman_inet_check_ipaddress(server) > 0) {
 		DBG("Using timeservers %s", server);
 
 		__connman_ntp_start(server);

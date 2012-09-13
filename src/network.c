@@ -28,6 +28,19 @@
 
 #include "connman.h"
 
+/*
+ * How many times to send RS with the purpose of
+ * refreshing RDNSS entries before they actually expire.
+ * With a value of 1, one RS will be sent, with no retries.
+ */
+#define RS_REFRESH_COUNT	1
+
+/*
+ * Value in seconds to wait for RA after RS was sent.
+ * After this time elapsed, we can send another RS.
+ */
+#define RS_REFRESH_TIMEOUT	3
+
 static GSList *network_list = NULL;
 static GSList *driver_list = NULL;
 
@@ -46,6 +59,7 @@ struct connman_network {
 	char *path;
 	int index;
 	int router_solicit_count;
+	int router_solicit_refresh_count;
 
 	struct connman_network_driver *driver;
 	void *driver_data;
@@ -1113,6 +1127,58 @@ static void check_dhcpv6(struct nd_router_advert *reply,
 	connman_network_unref(network);
 }
 
+static void receive_refresh_rs_reply(struct nd_router_advert *reply,
+		unsigned int length, void *user_data)
+{
+	struct connman_network *network = user_data;
+
+	DBG("reply %p", reply);
+
+	if (reply == NULL) {
+		/*
+		 * Router solicitation message seem to get lost easily so
+		 * try to send it again.
+		 */
+		if (network->router_solicit_refresh_count > 1) {
+			network->router_solicit_refresh_count--;
+			DBG("re-send router solicitation %d",
+					network->router_solicit_refresh_count);
+			__connman_inet_ipv6_send_rs(network->index,
+					RS_REFRESH_TIMEOUT,
+					receive_refresh_rs_reply,
+					network);
+			return;
+		}
+	}
+
+	/* RS refresh not in progress anymore */
+	network->router_solicit_refresh_count = 0;
+
+	connman_network_unref(network);
+	return;
+}
+
+int __connman_refresh_rs_ipv6(struct connman_network *network, int index)
+{
+	int ret = 0;
+
+	DBG("network %p index %d", network, index);
+
+	/* Send only one RS for all RDNSS entries which are about to expire */
+	if (network->router_solicit_refresh_count > 0) {
+		DBG("RS refresh already started");
+		return 0;
+	}
+
+	network->router_solicit_refresh_count = RS_REFRESH_COUNT;
+
+	connman_network_ref(network);
+
+	ret = __connman_inet_ipv6_send_rs(index, RS_REFRESH_TIMEOUT,
+			receive_refresh_rs_reply, network);
+	return ret;
+}
+
 static void autoconf_ipv6_set(struct connman_network *network)
 {
 	struct connman_service *service;
@@ -1389,17 +1455,36 @@ connman_bool_t connman_network_get_associating(struct connman_network *network)
 	return network->associating;
 }
 
+void connman_network_clear_hidden(void *user_data)
+{
+	if (user_data == NULL)
+		return;
+
+	DBG("user_data %p", user_data);
+
+	/*
+	 * Hidden service does not have a connect timeout so
+	 * we do not need to remove it. We can just return
+	 * error to the caller telling that we could not find
+	 * any network that we could connect to.
+	 */
+	__connman_service_reply_dbus_pending(user_data, EIO);
+}
+
 int connman_network_connect_hidden(struct connman_network *network,
-				char *identity, char* passphrase)
+			char *identity, char* passphrase, void *user_data)
 {
 	int err = 0;
 	struct connman_service *service;
 
-	DBG("");
-
 	service = __connman_service_lookup_from_network(network);
-	if (service == NULL)
-		return -EINVAL;
+
+	DBG("network %p service %p user_data %p", network, service, user_data);
+
+	if (service == NULL) {
+		err = -EINVAL;
+		goto out;
+	}
 
 	if (identity != NULL)
 		__connman_service_set_agent_identity(service, identity);
@@ -1410,12 +1495,17 @@ int connman_network_connect_hidden(struct connman_network *network,
 	if (err == -ENOKEY) {
 		__connman_service_indicate_error(service,
 					CONNMAN_SERVICE_ERROR_INVALID_KEY);
-		return err;
+		goto out;
 	} else {
 		__connman_service_set_hidden(service);
 		__connman_service_set_userconnect(service, TRUE);
+		__connman_service_set_hidden_data(service, user_data);
 		return __connman_service_connect(service);
 	}
+
+out:
+	__connman_service_return_error(service, -err, user_data);
+	return err;
 }
 
 /**

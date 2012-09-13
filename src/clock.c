@@ -308,14 +308,19 @@ static DBusMessage *set_property(DBusConnection *conn,
 	return g_dbus_create_reply(msg, DBUS_TYPE_INVALID);
 }
 
-static GDBusMethodTable clock_methods[] = {
-	{ "GetProperties", "",   "a{sv}", get_properties },
-	{ "SetProperty",   "sv", "",      set_property   },
+static const GDBusMethodTable clock_methods[] = {
+	{ GDBUS_METHOD("GetProperties",
+			NULL, GDBUS_ARGS({ "properties", "a{sv}" }),
+			get_properties) },
+	{ GDBUS_METHOD("SetProperty",
+			GDBUS_ARGS({ "name", "s" }, { "value", "v" }), NULL,
+			set_property)   },
 	{ },
 };
 
-static GDBusSignalTable clock_signals[] = {
-	{ "PropertyChanged", "sv" },
+static const GDBusSignalTable clock_signals[] = {
+	{ GDBUS_SIGNAL("PropertyChanged",
+			GDBUS_ARGS({ "name", "s" }, { "value", "v" })) },
 	{ },
 };
 

@@ -45,6 +45,15 @@ Core
    security integration.
 
 
+- Favorite service migration removal
+
+  Priority: Medium
+  Complexity: C1
+  When: 12/2012
+
+  Remove service migration code that moves services from default.profile
+  to the current directory-based structure.
+
 
 WiFi
 ====
@@ -71,7 +80,7 @@ WiFi
 
    Priority: Medium
    Complexity: C4
-   Owner: Samuel Ortiz <sameo@linux.intel.com>
+   Owner: Tomasz Bursztyka <tomasz.bursztyka@linux.intel.com>
 
    While connected ConnMan should offload the background scanning to
    wpa_supplicant. Wpa_supplicant allows for a fancy background scan
@@ -88,16 +97,16 @@ WiFi
    Complexity: C2
 
 
+- Previous WPS pin code sending
+
+  Priority: Medium
+  Complexity: C2
+
+  Provide previous WPS pin code in PreviousPassphrase field if WPS was used.
+
 
 Bluetooth
 =========
-
-- DUN client
-
-   Priority: Low
-   Complexity: C4
-   Owner: Mario Tokarz <mario.tokarz@bmw-carit.de>
-
 
 
 Cellular

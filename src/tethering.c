@@ -35,7 +35,6 @@
 #include <string.h>
 #include <fcntl.h>
 #include <linux/if_tun.h>
-#include <linux/if_bridge.h>
 
 #include "connman.h"
 
@@ -46,6 +45,8 @@
 #ifndef DBUS_TYPE_UNIX_FD
 #define DBUS_TYPE_UNIX_FD -1
 #endif
+
+#define BRIDGE_PROC_DIR "/proc/sys/net/bridge"
 
 #define BRIDGE_NAME "tether"
 #define BRIDGE_DNS "8.8.8.8"
@@ -78,18 +79,9 @@ struct connman_private_network {
 
 const char *__connman_tethering_get_bridge(void)
 {
-	int sk, err;
-	unsigned long args[3];
+	struct stat st;
 
-	sk = socket(AF_INET, SOCK_STREAM, 0);
-	if (sk < 0)
-		return NULL;
-
-	args[0] = BRCTL_GET_VERSION;
-	args[1] = args[2] = 0;
-	err = ioctl(sk, SIOCGIFBR, &args);
-	close(sk);
-	if (err == -1) {
+	if (stat(BRIDGE_PROC_DIR, &st) < 0) {
 		connman_error("Missing support for 802.1d ethernet bridging");
 		return NULL;
 	}
@@ -429,7 +421,7 @@ int __connman_private_network_request(DBusMessage *msg, const char *owner)
 	pn->fd = fd;
 	pn->interface = iface;
 	pn->index = index;
-	pn->pool = __connman_ippool_create(pn->fd, 1, 1, ippool_disconnect, pn);
+	pn->pool = __connman_ippool_create(pn->index, 1, 1, ippool_disconnect, pn);
 	if (pn->pool == NULL) {
 		errno = -ENOMEM;
 		goto error;

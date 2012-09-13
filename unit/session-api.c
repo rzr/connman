@@ -285,9 +285,11 @@ static DBusMessage *notify_update(DBusConnection *conn,
 	return g_dbus_create_reply(msg, DBUS_TYPE_INVALID);
 }
 
-static GDBusMethodTable notify_methods[] = {
-	{ "Release", "",      "", notify_release },
-	{ "Update",  "a{sv}", "", notify_update  },
+static const GDBusMethodTable notify_methods[] = {
+	{ GDBUS_METHOD("Release", NULL, NULL, notify_release) },
+	{ GDBUS_METHOD("Update",
+			GDBUS_ARGS({ "settings", "a{sv}" }), NULL,
+			notify_update) },
 	{ },
 };
 

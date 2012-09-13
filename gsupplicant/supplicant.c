@@ -182,9 +182,14 @@ struct g_supplicant_bss {
 	dbus_int16_t signal;
 	GSupplicantMode mode;
 	GSupplicantSecurity security;
+	dbus_bool_t rsn_selected;
+	unsigned int wpa_keymgmt;
+	unsigned int wpa_pairwise;
+	unsigned int wpa_group;
+	unsigned int rsn_keymgmt;
+	unsigned int rsn_pairwise;
+	unsigned int rsn_group;
 	unsigned int keymgmt;
-	unsigned int pairwise;
-	unsigned int group;
 	dbus_bool_t privacy;
 	dbus_bool_t psk;
 	dbus_bool_t ieee8021x;
@@ -431,6 +436,21 @@ static void remove_interface(gpointer data)
 	g_hash_table_destroy(interface->bss_mapping);
 	g_hash_table_destroy(interface->net_mapping);
 	g_hash_table_destroy(interface->network_table);
+
+	if (interface->scan_callback != NULL) {
+		SUPPLICANT_DBG("call interface %p callback %p scanning %d",
+				interface, interface->scan_callback,
+				interface->scanning);
+
+		interface->scan_callback(-EIO, interface, interface->scan_data);
+                interface->scan_callback = NULL;
+                interface->scan_data = NULL;
+
+		if (interface->scanning == TRUE) {
+			interface->scanning = FALSE;
+			callback_scan_finished(interface);
+		}
+	}
 
 	callback_interface_removed(interface);
 
@@ -1138,13 +1158,6 @@ static void add_or_replace_bss_to_network(struct g_supplicant_bss *bss)
 	network->frequency = bss->frequency;
 	network->best_bss = bss;
 
-	network->wps = FALSE;
-	if ((bss->keymgmt & G_SUPPLICANT_KEYMGMT_WPS) != 0) {
-		network->wps = TRUE;
-
-		network->wps_capabilities |= bss->wps_capabilities;
-	}
-
 	SUPPLICANT_DBG("New network %s created", network->name);
 
 	network->bss_table = g_hash_table_new_full(g_str_hash, g_str_equal,
@@ -1159,6 +1172,12 @@ static void add_or_replace_bss_to_network(struct g_supplicant_bss *bss)
 	callback_network_added(network);
 
 done:
+	/* We update network's WPS properties if only bss provides WPS. */
+	if ((bss->keymgmt & G_SUPPLICANT_KEYMGMT_WPS) != 0) {
+		network->wps = TRUE;
+		network->wps_capabilities |= bss->wps_capabilities;
+	}
+
 	if (bss->signal > network->signal) {
 		network->signal = bss->signal;
 		network->best_bss = bss;
@@ -1186,7 +1205,7 @@ static void bss_rates(DBusMessageIter *iter, void *user_data)
 
 static void bss_keymgmt(DBusMessageIter *iter, void *user_data)
 {
-	struct g_supplicant_bss *bss = user_data;
+	unsigned int *keymgmt = user_data;
 	const char *str = NULL;
 	int i;
 
@@ -1196,14 +1215,15 @@ static void bss_keymgmt(DBusMessageIter *iter, void *user_data)
 
 	for (i = 0; keymgmt_map[i].str != NULL; i++)
 		if (strcmp(str, keymgmt_map[i].str) == 0) {
-			bss->keymgmt |= keymgmt_map[i].val;
+			SUPPLICANT_DBG("Keymgmt: %s", str);
+			*keymgmt |= keymgmt_map[i].val;
 			break;
 		}
 }
 
 static void bss_group(DBusMessageIter *iter, void *user_data)
 {
-	struct g_supplicant_bss *bss = user_data;
+	unsigned int *group = user_data;
 	const char *str = NULL;
 	int i;
 
@@ -1213,14 +1233,15 @@ static void bss_group(DBusMessageIter *iter, void *user_data)
 
 	for (i = 0; group_map[i].str != NULL; i++)
 		if (strcmp(str, group_map[i].str) == 0) {
-			bss->group |= group_map[i].val;
+			SUPPLICANT_DBG("Group: %s", str);
+			*group |= group_map[i].val;
 			break;
 		}
 }
 
 static void bss_pairwise(DBusMessageIter *iter, void *user_data)
 {
-	struct g_supplicant_bss *bss = user_data;
+	unsigned int *pairwise = user_data;
 	const char *str = NULL;
 	int i;
 
@@ -1230,7 +1251,8 @@ static void bss_pairwise(DBusMessageIter *iter, void *user_data)
 
 	for (i = 0; pairwise_map[i].str != NULL; i++)
 		if (strcmp(str, pairwise_map[i].str) == 0) {
-			bss->pairwise |= pairwise_map[i].val;
+			SUPPLICANT_DBG("Pairwise: %s", str);
+			*pairwise |= pairwise_map[i].val;
 			break;
 		}
 }
@@ -1238,13 +1260,33 @@ static void bss_pairwise(DBusMessageIter *iter, void *user_data)
 static void bss_wpa(const char *key, DBusMessageIter *iter,
 			void *user_data)
 {
-	if (g_strcmp0(key, "KeyMgmt") == 0)
-		supplicant_dbus_array_foreach(iter, bss_keymgmt, user_data);
-	else if (g_strcmp0(key, "Group") == 0)
-		supplicant_dbus_array_foreach(iter, bss_group, user_data);
-	else if (g_strcmp0(key, "Pairwise") == 0)
-		supplicant_dbus_array_foreach(iter, bss_pairwise, user_data);
+	struct g_supplicant_bss *bss = user_data;
+	unsigned int value = 0;
 
+	SUPPLICANT_DBG("Key: %s", key);
+
+	if (g_strcmp0(key, "KeyMgmt") == 0) {
+		supplicant_dbus_array_foreach(iter, bss_keymgmt, &value);
+
+		if (bss->rsn_selected == TRUE)
+			bss->rsn_keymgmt = value;
+		else
+			bss->wpa_keymgmt = value;
+	} else if (g_strcmp0(key, "Group") == 0) {
+		supplicant_dbus_array_foreach(iter, bss_group, &value);
+
+		if (bss->rsn_selected == TRUE)
+			bss->rsn_group = value;
+		else
+			bss->wpa_group = value;
+	} else if (g_strcmp0(key, "Pairwise") == 0) {
+		supplicant_dbus_array_foreach(iter, bss_pairwise, &value);
+
+		if (bss->rsn_selected == TRUE)
+			bss->rsn_pairwise = value;
+		else
+			bss->wpa_pairwise = value;
+	}
 }
 
 static unsigned int get_tlv(unsigned char *ie, unsigned int ie_size,
@@ -1315,6 +1357,9 @@ static void bss_process_ies(DBusMessageIter *iter, void *user_data)
 	if (ie == NULL || ie_len < 2)
 		return;
 
+	bss->wps_capabilities = 0;
+	bss->keymgmt = 0;
+
 	for (ie_end = ie + ie_len; ie < ie_end && ie + ie[1] + 1 <= ie_end;
 							ie += ie[1] + 2) {
 
@@ -1356,6 +1401,26 @@ static void bss_process_ies(DBusMessageIter *iter, void *user_data)
 
 static void bss_compute_security(struct g_supplicant_bss *bss)
 {
+	/*
+	 * Combining RSN and WPA keymgmt
+	 * We combine it since parsing IEs might have set something for WPS. */
+	bss->keymgmt |= bss->rsn_keymgmt | bss->wpa_keymgmt;
+
+	bss->ieee8021x = FALSE;
+	bss->psk = FALSE;
+
+	if (bss->keymgmt &
+			(G_SUPPLICANT_KEYMGMT_WPA_EAP |
+				G_SUPPLICANT_KEYMGMT_WPA_FT_EAP |
+				G_SUPPLICANT_KEYMGMT_WPA_EAP_256))
+		bss->ieee8021x = TRUE;
+
+	if (bss->keymgmt &
+			(G_SUPPLICANT_KEYMGMT_WPA_PSK |
+				G_SUPPLICANT_KEYMGMT_WPA_FT_PSK |
+				G_SUPPLICANT_KEYMGMT_WPA_PSK_256))
+		bss->psk = TRUE;
+
 	if (bss->ieee8021x == TRUE)
 		bss->security = G_SUPPLICANT_SECURITY_IEEE8021X;
 	else if (bss->psk == TRUE)
@@ -1450,21 +1515,14 @@ static void bss_property(const char *key, DBusMessageIter *iter,
 
 		dbus_message_iter_get_basic(iter, &privacy);
 		bss->privacy = privacy;
-	} else if ((g_strcmp0(key, "RSN") == 0) ||
-			(g_strcmp0(key, "WPA") == 0)) {
+	} else if (g_strcmp0(key, "RSN") == 0) {
+		bss->rsn_selected = TRUE;
+
 		supplicant_dbus_property_foreach(iter, bss_wpa, bss);
+	} else if (g_strcmp0(key, "WPA") == 0) {
+		bss->rsn_selected = FALSE;
 
-		if (bss->keymgmt &
-			(G_SUPPLICANT_KEYMGMT_WPA_EAP |
-				G_SUPPLICANT_KEYMGMT_WPA_FT_EAP |
-				G_SUPPLICANT_KEYMGMT_WPA_EAP_256))
-			bss->ieee8021x = TRUE;
-
-		if (bss->keymgmt &
-			(G_SUPPLICANT_KEYMGMT_WPA_PSK |
-				G_SUPPLICANT_KEYMGMT_WPA_FT_PSK |
-				G_SUPPLICANT_KEYMGMT_WPA_PSK_256))
-			bss->psk = TRUE;
+		supplicant_dbus_property_foreach(iter, bss_wpa, bss);
 	} else if (g_strcmp0(key, "IEs") == 0)
 		bss_process_ies(iter, bss);
 	else
@@ -1698,23 +1756,6 @@ static void interface_property(const char *key, DBusMessageIter *iter,
 	} else
 		SUPPLICANT_DBG("key %s type %c",
 				key, dbus_message_iter_get_arg_type(iter));
-
-	if (key != NULL) {
-		debug_strvalmap("000 KeyMgmt capability", keymgmt_map,
-						interface->keymgmt_capa);
-		debug_strvalmap("000 AuthAlg capability", authalg_capa_map,
-						interface->authalg_capa);
-		debug_strvalmap("000 Protocol capability", proto_capa_map,
-						interface->proto_capa);
-		debug_strvalmap("000 Pairwise capability", pairwise_map,
-						interface->pairwise_capa);
-		debug_strvalmap("000 Group capability", group_map,
-						interface->group_capa);
-		debug_strvalmap("000 Scan capability", scan_capa_map,
-						interface->scan_capa);
-		debug_strvalmap("000 Mode capability", mode_capa_map,
-						interface->mode_capa);
-	}
 }
 
 static void scan_network_update(DBusMessageIter *iter, void *user_data)
@@ -2077,7 +2118,7 @@ static void signal_bss_changed(const char *path, DBusMessageIter *iter)
 		/* Security change policy:
 		 * - we first copy the current bss into a new one with
 		 * its own pointer (path)
-		 * - we remove the current bss related nework which will
+		 * - we remove the current bss related network which will
 		 * tell the plugin about such removal. This is done due
 		 * to the fact that a security change means a group change
 		 * so a complete network change.
@@ -2396,7 +2437,7 @@ static void interface_create_result(const char *error,
 	SUPPLICANT_DBG("");
 
 	if (error != NULL) {
-		g_critical("error %s", error);
+		g_warning("error %s", error);
 		err = -EIO;
 		goto done;
 	}
@@ -2469,7 +2510,6 @@ static void interface_get_result(const char *error,
 
 	if (error != NULL) {
 		SUPPLICANT_DBG("Interface not created yet");
-		err = -EIO;
 		goto create;
 	}
 
@@ -2979,17 +3019,49 @@ static dbus_bool_t is_psk_raw_key(const char *psk)
 	return TRUE;
 }
 
+static unsigned char hexchar2bin(char c)
+{
+	if ((c >= '0') && (c <= '9'))
+		return c - '0';
+	else if ((c >= 'A') && (c <= 'F'))
+		return c - 'A' + 10;
+	else if ((c >= 'a') && (c <= 'f'))
+		return c - 'a' + 10;
+	else
+		return c;
+}
+
+static void hexstring2bin(const char *string, unsigned char *data, size_t data_len)
+{
+	size_t i;
+
+	for (i = 0; i < data_len; i++)
+		data[i] = (hexchar2bin(string[i * 2 + 0]) << 4 |
+			   hexchar2bin(string[i * 2 + 1]) << 0);
+}
+
 static void add_network_security_psk(DBusMessageIter *dict,
 					GSupplicantSSID *ssid)
 {
 	if (ssid->passphrase && strlen(ssid->passphrase) > 0) {
-		if (is_psk_raw_key(ssid->passphrase) == TRUE)
+		const char *key = "psk";
+
+		if (is_psk_raw_key(ssid->passphrase) == TRUE) {
+			unsigned char data[32];
+			unsigned char *datap = data;
+
+			/* The above pointer alias is required by D-Bus because
+			 * with D-Bus and GCC, non-heap-allocated arrays cannot
+			 * be passed directly by their base pointer. */
+
+			hexstring2bin(ssid->passphrase, datap, sizeof(data));
+
 			supplicant_dbus_dict_append_fixed_array(dict,
-							"psk", DBUS_TYPE_BYTE,
-							&ssid->passphrase, 64);
-		else
-			supplicant_dbus_dict_append_basic(dict, "psk",
-							DBUS_TYPE_STRING,
+							key, DBUS_TYPE_BYTE,
+							&datap, sizeof(data));
+		} else
+			supplicant_dbus_dict_append_basic(dict,
+							key, DBUS_TYPE_STRING,
 							&ssid->passphrase);
 	}
 }

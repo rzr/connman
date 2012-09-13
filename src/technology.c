@@ -609,7 +609,10 @@ done:
 			technology->pending_timeout = g_timeout_add_seconds(10,
 					technology_pending_reply, technology);
 		} else {
-			reply = __connman_error_failed(msg, -err);
+			if (err == -EALREADY)
+				reply = __connman_error_already_enabled(msg);
+			else
+				reply = __connman_error_failed(msg, -err);
 			if (reply != NULL)
 				g_dbus_send_message(connection, reply);
 		}
@@ -670,7 +673,10 @@ done:
 			technology->pending_timeout = g_timeout_add_seconds(10,
 					technology_pending_reply, technology);
 		} else {
-			reply = __connman_error_failed(msg, -err);
+			if (err == -EALREADY)
+				reply = __connman_error_already_disabled(msg);
+			else
+				reply = __connman_error_failed(msg, -err);
 			if (reply != NULL)
 				g_dbus_send_message(connection, reply);
 		}
@@ -831,7 +837,7 @@ void __connman_technology_scan_stopped(struct connman_device *device)
 		if (__connman_device_get_service_type(other_device) != type)
 			continue;
 
-		if (__connman_device_scanning(other_device))
+		if (connman_device_get_scanning(other_device) == TRUE)
 			count += 1;
 	}
 
@@ -858,16 +864,20 @@ static DBusMessage *scan(DBusConnection *conn, DBusMessage *msg, void *data)
 	return NULL;
 }
 
-static GDBusMethodTable technology_methods[] = {
-	{ "GetProperties", "",   "a{sv}", get_properties },
-	{ "SetProperty",   "sv", "",      set_property   },
-	{ "Scan",          "",    "",     scan,
-						G_DBUS_METHOD_FLAG_ASYNC },
+static const GDBusMethodTable technology_methods[] = {
+	{ GDBUS_DEPRECATED_METHOD("GetProperties",
+			NULL, GDBUS_ARGS({ "properties", "a{sv}" }),
+			get_properties) },
+	{ GDBUS_METHOD("SetProperty",
+			GDBUS_ARGS({ "name", "s" }, { "value", "v" }),
+			NULL, set_property) },
+	{ GDBUS_ASYNC_METHOD("Scan", NULL, NULL, scan) },
 	{ },
 };
 
-static GDBusSignalTable technology_signals[] = {
-	{ "PropertyChanged", "sv" },
+static const GDBusSignalTable technology_signals[] = {
+	{ GDBUS_SIGNAL("PropertyChanged",
+			GDBUS_ARGS({ "name", "s" }, { "value", "v" })) },
 	{ },
 };
 
@@ -1097,9 +1107,6 @@ int __connman_technology_remove_device(struct connman_device *device)
 		return -ENXIO;
 	}
 
-	if (__connman_device_scanning(device))
-		__connman_technology_scan_stopped(device);
-
 	technology->device_list = g_slist_remove(technology->device_list,
 								device);
 	technology_put(technology);
@@ -1130,8 +1137,10 @@ int __connman_technology_enabled(enum connman_service_type type)
 	if (technology == NULL)
 		return -ENXIO;
 
-	if (__sync_fetch_and_add(&technology->enabled, 1) == 0)
-		powered_changed(technology);
+	if (__sync_fetch_and_add(&technology->enabled, 1) != 0)
+		return -EALREADY;
+
+	powered_changed(technology);
 
 	if (technology->pending_reply != NULL) {
 		g_dbus_send_reply(connection, technology->pending_reply, DBUS_TYPE_INVALID);
@@ -1152,6 +1161,9 @@ int __connman_technology_disabled(enum connman_service_type type)
 	if (technology == NULL)
 		return -ENXIO;
 
+	if (__sync_fetch_and_sub(&technology->enabled, 1) != 1)
+		return -EINPROGRESS;
+
 	if (technology->pending_reply != NULL) {
 		g_dbus_send_reply(connection, technology->pending_reply, DBUS_TYPE_INVALID);
 		dbus_message_unref(technology->pending_reply);
@@ -1160,8 +1172,7 @@ int __connman_technology_disabled(enum connman_service_type type)
 		technology->pending_timeout = 0;
 	}
 
-	if (__sync_fetch_and_sub(&technology->enabled, 1) == 1)
-		powered_changed(technology);
+	powered_changed(technology);
 
 	return 0;
 }

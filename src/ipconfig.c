@@ -1245,6 +1245,7 @@ void __connman_ipconfig_set_prefixlen(struct connman_ipconfig *ipconfig, unsigne
 static struct connman_ipconfig *create_ipv6config(int index)
 {
 	struct connman_ipconfig *ipv6config;
+	struct connman_ipdevice *ipdevice;
 
 	DBG("index %d", index);
 
@@ -1258,7 +1259,10 @@ static struct connman_ipconfig *create_ipv6config(int index)
 	ipv6config->enabled = FALSE;
 	ipv6config->type = CONNMAN_IPCONFIG_TYPE_IPV6;
 	ipv6config->method = CONNMAN_IPCONFIG_METHOD_AUTO;
-	ipv6config->ipv6_privacy_config = 0;
+
+	ipdevice = g_hash_table_lookup(ipdevice_hash, GINT_TO_POINTER(index));
+	if (ipdevice != NULL)
+		ipv6config->ipv6_privacy_config = ipdevice->ipv6_privacy;
 
 	ipv6config->address = connman_ipaddress_alloc(AF_INET6);
 	if (ipv6config->address == NULL) {
@@ -1849,6 +1853,7 @@ static int string2privacy(const char *privacy)
 void __connman_ipconfig_append_ipv4(struct connman_ipconfig *ipconfig,
 							DBusMessageIter *iter)
 {
+	struct connman_ipaddress *append_addr = NULL;
 	const char *str;
 
 	DBG("");
@@ -1862,33 +1867,52 @@ void __connman_ipconfig_append_ipv4(struct connman_ipconfig *ipconfig,
 
 	connman_dbus_dict_append_basic(iter, "Method", DBUS_TYPE_STRING, &str);
 
-	if (ipconfig->system == NULL)
+	append_addr = ipconfig->system;
+
+	switch (ipconfig->method) {
+	case CONNMAN_IPCONFIG_METHOD_UNKNOWN:
+	case CONNMAN_IPCONFIG_METHOD_OFF:
 		return;
 
-	if (ipconfig->system->local != NULL) {
+	case CONNMAN_IPCONFIG_METHOD_FIXED:
+		if (append_addr == NULL)
+			append_addr = ipconfig->address;
+		break;
+
+	case CONNMAN_IPCONFIG_METHOD_MANUAL:
+	case CONNMAN_IPCONFIG_METHOD_DHCP:
+	case CONNMAN_IPCONFIG_METHOD_AUTO:
+		break;
+	}
+
+	if (append_addr == NULL)
+		return;
+
+	if (append_addr->local != NULL) {
 		in_addr_t addr;
 		struct in_addr netmask;
 		char *mask;
 
 		connman_dbus_dict_append_basic(iter, "Address",
-				DBUS_TYPE_STRING, &ipconfig->system->local);
+				DBUS_TYPE_STRING, &append_addr->local);
 
-		addr = 0xffffffff << (32 - ipconfig->system->prefixlen);
+		addr = 0xffffffff << (32 - append_addr->prefixlen);
 		netmask.s_addr = htonl(addr);
 		mask = inet_ntoa(netmask);
 		connman_dbus_dict_append_basic(iter, "Netmask",
 						DBUS_TYPE_STRING, &mask);
 	}
 
-	if (ipconfig->system->gateway != NULL)
+	if (append_addr->gateway != NULL)
 		connman_dbus_dict_append_basic(iter, "Gateway",
-				DBUS_TYPE_STRING, &ipconfig->system->gateway);
+				DBUS_TYPE_STRING, &append_addr->gateway);
 }
 
 void __connman_ipconfig_append_ipv6(struct connman_ipconfig *ipconfig,
 					DBusMessageIter *iter,
 					struct connman_ipconfig *ipconfig_ipv4)
 {
+	struct connman_ipaddress *append_addr = NULL;
 	const char *str, *privacy;
 
 	DBG("");
@@ -1908,20 +1932,38 @@ void __connman_ipconfig_append_ipv6(struct connman_ipconfig *ipconfig,
 
 	connman_dbus_dict_append_basic(iter, "Method", DBUS_TYPE_STRING, &str);
 
-	if (ipconfig->system == NULL)
+	append_addr = ipconfig->system;
+
+	switch (ipconfig->method) {
+	case CONNMAN_IPCONFIG_METHOD_UNKNOWN:
+	case CONNMAN_IPCONFIG_METHOD_OFF:
 		return;
 
-	if (ipconfig->system->local != NULL) {
-		connman_dbus_dict_append_basic(iter, "Address",
-				DBUS_TYPE_STRING, &ipconfig->system->local);
-		connman_dbus_dict_append_basic(iter, "PrefixLength",
-						DBUS_TYPE_BYTE,
-						&ipconfig->system->prefixlen);
+	case CONNMAN_IPCONFIG_METHOD_FIXED:
+		if (append_addr == NULL)
+			append_addr = ipconfig->address;
+		break;
+
+	case CONNMAN_IPCONFIG_METHOD_MANUAL:
+	case CONNMAN_IPCONFIG_METHOD_DHCP:
+	case CONNMAN_IPCONFIG_METHOD_AUTO:
+		break;
 	}
 
-	if (ipconfig->system->gateway != NULL)
+	if (append_addr == NULL)
+		return;
+
+	if (append_addr->local != NULL) {
+		connman_dbus_dict_append_basic(iter, "Address",
+				DBUS_TYPE_STRING, &append_addr->local);
+		connman_dbus_dict_append_basic(iter, "PrefixLength",
+						DBUS_TYPE_BYTE,
+						&append_addr->prefixlen);
+	}
+
+	if (append_addr->gateway != NULL)
 		connman_dbus_dict_append_basic(iter, "Gateway",
-				DBUS_TYPE_STRING, &ipconfig->system->gateway);
+				DBUS_TYPE_STRING, &append_addr->gateway);
 
 	privacy = privacy2string(ipconfig->ipv6_privacy_config);
 	connman_dbus_dict_append_basic(iter, "Privacy",
@@ -2302,8 +2344,9 @@ int __connman_ipconfig_save(struct connman_ipconfig *ipconfig,
 	}
 
 	key = g_strdup_printf("%snetmask_prefixlen", prefix);
-	g_key_file_set_integer(keyfile, identifier,
-			key, ipconfig->address->prefixlen);
+	if (ipconfig->address->prefixlen != 0)
+		g_key_file_set_integer(keyfile, identifier,
+				key, ipconfig->address->prefixlen);
 	g_free(key);
 
 	key = g_strdup_printf("%slocal_address", prefix);

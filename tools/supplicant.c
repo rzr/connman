@@ -894,8 +894,6 @@ static void extract_rsn(struct supplicant_bss *bss,
 		}
 	}
 
-	buf += 2 + (count * 4);
-	len -= 2 + (count * 4);
 }
 
 static void bss_rates(DBusMessageIter *iter, void *user_data)
@@ -1745,10 +1743,8 @@ static void interface_get_result(const char *error,
 	const char *path = NULL;
 	int err;
 
-	if (error != NULL) {
-		err = -EIO;
+	if (error != NULL)
 		goto create;
-	}
 
 	dbus_message_iter_get_basic(iter, &path);
 	if (path == NULL) {

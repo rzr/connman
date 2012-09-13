@@ -24,6 +24,7 @@
 #endif
 
 #include <errno.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
 #include <stdint.h>
@@ -182,10 +183,13 @@ static GHashTable *cache;
 static int cache_refcount;
 static GSList *server_list = NULL;
 static GSList *request_list = NULL;
-static GSList *request_pending_list = NULL;
-static guint16 request_id = 0x0000;
 static GHashTable *listener_table = NULL;
 static time_t next_refresh;
+
+static guint16 get_id()
+{
+	return random();
+}
 
 static int protocol_offset(int protocol)
 {
@@ -372,15 +376,32 @@ static void send_cached_response(int sk, unsigned char *buf, int len,
 				int protocol, int id, uint16_t answers, int ttl)
 {
 	struct domain_hdr *hdr;
-	int err, offset = protocol_offset(protocol);
+	unsigned char *ptr = buf;
+	int err, offset, dns_len, adj_len = len - 2;
 
-	if (offset < 0)
+	/*
+	 * The cached packet contains always the TCP offset (two bytes)
+	 * so skip them for UDP.
+	 */
+	switch (protocol) {
+	case IPPROTO_UDP:
+		ptr += 2;
+		len -= 2;
+		dns_len = len;
+		offset = 0;
+		break;
+	case IPPROTO_TCP:
+		offset = 2;
+		dns_len = ptr[0] * 256 + ptr[1];
+		break;
+	default:
 		return;
+	}
 
 	if (len < 12)
 		return;
 
-	hdr = (void *) (buf + offset);
+	hdr = (void *) (ptr + offset);
 
 	hdr->id = id;
 	hdr->qr = 1;
@@ -393,16 +414,22 @@ static void send_cached_response(int sk, unsigned char *buf, int len,
 	if (answers == 0)
 		hdr->aa = 1;
 	else
-		update_cached_ttl(buf, len, ttl);
+		update_cached_ttl((unsigned char *)hdr, adj_len, ttl);
 
-	DBG("id 0x%04x answers %d", hdr->id, answers);
+	DBG("sk %d id 0x%04x answers %d ptr %p length %d dns %d",
+		sk, hdr->id, answers, ptr, len, dns_len);
 
-	err = sendto(sk, buf, len, 0, to, tolen);
+	err = sendto(sk, ptr, len, MSG_NOSIGNAL, to, tolen);
 	if (err < 0) {
 		connman_error("Cannot send cached DNS response: %s",
 				strerror(errno));
 		return;
 	}
+
+	if (err != len || (dns_len != (len - 2) && protocol == IPPROTO_TCP) ||
+				(dns_len != len && protocol == IPPROTO_UDP))
+		DBG("Packet length mismatch, sent %d wanted %d dns %d",
+			err, len, dns_len);
 }
 
 static void send_response(int sk, unsigned char *buf, int len,
@@ -412,7 +439,7 @@ static void send_response(int sk, unsigned char *buf, int len,
 	struct domain_hdr *hdr;
 	int err, offset = protocol_offset(protocol);
 
-	DBG("");
+	DBG("sk %d", sk);
 
 	if (offset < 0)
 		return;
@@ -431,10 +458,10 @@ static void send_response(int sk, unsigned char *buf, int len,
 	hdr->nscount = 0;
 	hdr->arcount = 0;
 
-	err = sendto(sk, buf, len, 0, to, tolen);
+	err = sendto(sk, buf, len, MSG_NOSIGNAL, to, tolen);
 	if (err < 0) {
-		connman_error("Failed to send DNS response: %s",
-				strerror(errno));
+		connman_error("Failed to send DNS response to %d: %s",
+				sk, strerror(errno));
 		return;
 	}
 }
@@ -459,7 +486,7 @@ static gboolean request_timeout(gpointer user_data)
 
 		sk = g_io_channel_unix_get_fd(ifdata->udp_listener_channel);
 
-		err = sendto(sk, req->resp, req->resplen, 0,
+		err = sendto(sk, req->resp, req->resplen, MSG_NOSIGNAL,
 						&req->sa, req->sa_len);
 		if (err < 0)
 			return FALSE;
@@ -494,53 +521,50 @@ static int append_query(unsigned char *buf, unsigned int size,
 				const char *query, const char *domain)
 {
 	unsigned char *ptr = buf;
-	char *offset;
 	int len;
 
 	DBG("query %s domain %s", query, domain);
 
-	offset = (char *) query;
-	while (offset != NULL) {
-		char *tmp;
+	while (query != NULL) {
+		const char *tmp;
 
-		tmp = strchr(offset, '.');
+		tmp = strchr(query, '.');
 		if (tmp == NULL) {
-			len = strlen(offset);
+			len = strlen(query);
 			if (len == 0)
 				break;
 			*ptr = len;
-			memcpy(ptr + 1, offset, len);
+			memcpy(ptr + 1, query, len);
 			ptr += len + 1;
 			break;
 		}
 
-		*ptr = tmp - offset;
-		memcpy(ptr + 1, offset, tmp - offset);
-		ptr += tmp - offset + 1;
+		*ptr = tmp - query;
+		memcpy(ptr + 1, query, tmp - query);
+		ptr += tmp - query + 1;
 
-		offset = tmp + 1;
+		query = tmp + 1;
 	}
 
-	offset = (char *) domain;
-	while (offset != NULL) {
-		char *tmp;
+	while (domain != NULL) {
+		const char *tmp;
 
-		tmp = strchr(offset, '.');
+		tmp = strchr(domain, '.');
 		if (tmp == NULL) {
-			len = strlen(offset);
+			len = strlen(domain);
 			if (len == 0)
 				break;
 			*ptr = len;
-			memcpy(ptr + 1, offset, len);
+			memcpy(ptr + 1, domain, len);
 			ptr += len + 1;
 			break;
 		}
 
-		*ptr = tmp - offset;
-		memcpy(ptr + 1, offset, tmp - offset);
-		ptr += tmp - offset + 1;
+		*ptr = tmp - domain;
+		memcpy(ptr + 1, domain, tmp - domain);
+		ptr += tmp - domain + 1;
 
-		offset = tmp + 1;
+		domain = tmp + 1;
 	}
 
 	*ptr++ = 0x00;
@@ -641,13 +665,22 @@ static uint16_t cache_check_validity(char *question, uint16_t type,
 	return type;
 }
 
-static struct cache_entry *cache_check(gpointer request, int *qtype)
+static struct cache_entry *cache_check(gpointer request, int *qtype, int proto)
 {
-	char *question = request + 12;
+	char *question;
 	struct cache_entry *entry;
 	struct domain_question *q;
 	uint16_t type;
-	int offset;
+	int offset, proto_offset;
+
+	if (request == NULL)
+		return NULL;
+
+	proto_offset = protocol_offset(proto);
+	if (proto_offset < 0)
+		return NULL;
+
+	question = request + proto_offset + 12;
 
 	offset = strlen(question) + 1;
 	q = (void *) (question + offset);
@@ -1201,7 +1234,6 @@ static int reply_query_type(unsigned char *msg, int len)
 	/* now the query, which is a name and 2 16 bit words */
 	l = dns_name_length(c) + 1;
 	c += l;
-	len -= l;
 	w = (uint16_t *) c;
 	type = ntohs(*w);
 
@@ -1214,6 +1246,7 @@ static int cache_update(struct server_data *srv, unsigned char *msg,
 	int offset = protocol_offset(srv->protocol);
 	int err, qlen, ttl = 0;
 	uint16_t answers = 0, type = 0, class = 0;
+	struct domain_hdr *hdr = (void *)(msg + offset);
 	struct domain_question *q;
 	struct cache_entry *entry;
 	struct cache_data *data;
@@ -1238,12 +1271,13 @@ static int cache_update(struct server_data *srv, unsigned char *msg,
 		next_refresh = current_time + 30;
 	}
 
-
-	/* Continue only if response code is 0 (=ok) */
-	if (msg[3] & 0x0f)
+	if (offset < 0)
 		return 0;
 
-	if (offset < 0)
+	DBG("offset %d hdr %p msg %p rcode %d", offset, hdr, msg, hdr->rcode);
+
+	/* Continue only if response code is 0 (=ok) */
+	if (hdr->rcode != 0)
 		return 0;
 
 	rsplen = sizeof(response) - 1;
@@ -1260,21 +1294,30 @@ static int cache_update(struct server_data *srv, unsigned char *msg,
 	 * to cache the negative response.
 	 */
 	if ((err == -ENOMSG || err == -ENOBUFS) &&
-			reply_query_type(msg, msg_len) == 28) {
+			reply_query_type(msg + offset,
+					msg_len - offset) == 28) {
 		entry = g_hash_table_lookup(cache, question);
 		if (entry && entry->ipv4 && entry->ipv6 == NULL) {
+			int cache_offset = 0;
+
 			data = g_try_new(struct cache_data, 1);
 			if (data == NULL)
 				return -ENOMEM;
 			data->inserted = entry->ipv4->inserted;
 			data->type = type;
-			data->answers = msg[5];
+			data->answers = hdr->ancount;
 			data->timeout = entry->ipv4->timeout;
-			data->data_len = msg_len;
-			data->data = ptr = g_malloc(msg_len);
+			if (srv->protocol == IPPROTO_UDP)
+				cache_offset = 2;
+			data->data_len = msg_len + cache_offset;
+			data->data = ptr = g_malloc(data->data_len);
+			ptr[0] = (data->data_len - 2) / 256;
+			ptr[1] = (data->data_len - 2) - ptr[0] * 256;
+			if (srv->protocol == IPPROTO_UDP)
+				ptr += 2;
 			data->valid_until = entry->ipv4->valid_until;
 			data->cache_until = entry->ipv4->cache_until;
-			memcpy(data->data, msg, msg_len);
+			memcpy(ptr, msg, msg_len);
 			entry->ipv6 = data;
 			/*
 			 * we will get a "hit" when we serve the response
@@ -1354,7 +1397,12 @@ static int cache_update(struct server_data *srv, unsigned char *msg,
 	data->type = type;
 	data->answers = answers;
 	data->timeout = ttl;
-	data->data_len = 12 + qlen + 1 + 2 + 2 + rsplen;
+	/*
+	 * The "2" in start of the length is the TCP offset. We allocate it
+	 * here even for UDP packet because it simplifies the sending
+	 * of cached packet.
+	 */
+	data->data_len = 2 + 12 + qlen + 1 + 2 + 2 + rsplen;
 	data->data = ptr = g_malloc(data->data_len);
 	data->valid_until = current_time + ttl;
 
@@ -1374,13 +1422,24 @@ static int cache_update(struct server_data *srv, unsigned char *msg,
 		return -ENOMEM;
 	}
 
-	memcpy(ptr, msg, 12);
-	memcpy(ptr + 12, question, qlen + 1); /* copy also the \0 */
+	/*
+	 * We cache the two extra bytes at the start of the message
+	 * in a TCP packet. When sending UDP packet, we skip the first
+	 * two bytes. This way we do not need to know the format
+	 * (UDP/TCP) of the cached message.
+	 */
+	ptr[0] = (data->data_len - 2) / 256;
+	ptr[1] = (data->data_len - 2) - ptr[0] * 256;
+	if (srv->protocol == IPPROTO_UDP)
+		ptr += 2;
 
-	q = (void *) (ptr + 12 + qlen + 1);
+	memcpy(ptr, msg, offset + 12);
+	memcpy(ptr + offset + 12, question, qlen + 1); /* copy also the \0 */
+
+	q = (void *) (ptr + offset + 12 + qlen + 1);
 	q->type = htons(type);
 	q->class = htons(class);
-	memcpy(ptr + 12 + qlen + 1 + sizeof(struct domain_question),
+	memcpy(ptr + offset + 12 + qlen + 1 + sizeof(struct domain_question),
 		response, rsplen);
 
 	if (new_entry == TRUE) {
@@ -1388,10 +1447,15 @@ static int cache_update(struct server_data *srv, unsigned char *msg,
 		cache_size++;
 	}
 
-	DBG("cache %d %squestion \"%s\" type %d ttl %d size %zd",
+	DBG("cache %d %squestion \"%s\" type %d ttl %d size %zd packet %u "
+								"dns len %u",
 		cache_size, new_entry ? "new " : "old ",
 		question, type, ttl,
-		sizeof(*entry) + sizeof(*data) + data->data_len + qlen);
+		sizeof(*entry) + sizeof(*data) + data->data_len + qlen,
+		data->data_len,
+		srv->protocol == IPPROTO_TCP ?
+			(unsigned int)(data->data[0] * 256 + data->data[1]) :
+			data->data_len);
 
 	return 0;
 }
@@ -1404,7 +1468,7 @@ static int ns_resolv(struct server_data *server, struct request_data *req,
 	char *dot, *lookup = (char *) name;
 	struct cache_entry *entry;
 
-	entry = cache_check(request, &type);
+	entry = cache_check(request, &type, req->protocol);
 	if (entry != NULL) {
 		int ttl_left = 0;
 		struct cache_data *data;
@@ -1442,7 +1506,9 @@ static int ns_resolv(struct server_data *server, struct request_data *req,
 
 	sk = g_io_channel_unix_get_fd(server->channel);
 
-	err = send(sk, request, req->request_len, 0);
+	err = send(sk, request, req->request_len, MSG_NOSIGNAL);
+	if (err < 0)
+		return -EIO;
 
 	req->numserv++;
 
@@ -1497,7 +1563,7 @@ static int ns_resolv(struct server_data *server, struct request_data *req,
 			alt[1] = req_len & 0xff;
 		}
 
-		err = send(sk, alt, req->request_len + domlen, 0);
+		err = send(sk, alt, req->request_len + domlen, MSG_NOSIGNAL);
 		if (err < 0)
 			return -EIO;
 
@@ -1505,6 +1571,17 @@ static int ns_resolv(struct server_data *server, struct request_data *req,
 	}
 
 	return 0;
+}
+
+static void destroy_request_data(struct request_data *req)
+{
+	if (req->timeout > 0)
+		g_source_remove(req->timeout);
+
+	g_free(req->resp);
+	g_free(req->request);
+	g_free(req->name);
+	g_free(req);
 }
 
 static int forward_dns_reply(unsigned char *reply, int reply_len, int protocol,
@@ -1553,17 +1630,30 @@ static int forward_dns_reply(unsigned char *reply, int reply_len, int protocol,
 			 */
 			ptr = reply + offset + sizeof(struct domain_hdr);
 			host_len = *ptr;
-			domain_len = strlen((const char *)ptr) - host_len - 1;
+			domain_len = strlen((const char *)ptr + host_len + 1);
 
 			/*
-			 * remove the domain name and replaced it by the end
-			 * of reply.
+			 * Remove the domain name and replace it by the end
+			 * of reply. Check if the domain is really there
+			 * before trying to copy the data. The domain_len can
+			 * be 0 because if the original query did not contain
+			 * a domain name, then we are sending two packets,
+			 * first without the domain name and the second packet
+			 * with domain name. The append_domain is set to true
+			 * even if we sent the first packet without domain
+			 * name. In this case we end up in this branch.
 			 */
-			memmove(ptr + host_len + 1,
-				ptr + host_len + domain_len + 1,
-				reply_len - (ptr - reply + domain_len));
+			if (domain_len > 0) {
+				/*
+				 * Note that we must use memmove() here,
+				 * because the memory areas can overlap.
+				 */
+				memmove(ptr + host_len + 1,
+					ptr + host_len + domain_len + 1,
+					reply_len - (ptr - reply + domain_len));
 
-			reply_len = reply_len - domain_len;
+				reply_len = reply_len - domain_len;
+			}
 		}
 
 		g_free(req->resp);
@@ -1582,9 +1672,6 @@ static int forward_dns_reply(unsigned char *reply, int reply_len, int protocol,
 	if (hdr->rcode > 0 && req->numresp < req->numserv)
 		return -EINVAL;
 
-	if (req->timeout > 0)
-		g_source_remove(req->timeout);
-
 	request_list = g_slist_remove(request_list, req);
 
 	if (protocol == IPPROTO_UDP) {
@@ -1593,12 +1680,17 @@ static int forward_dns_reply(unsigned char *reply, int reply_len, int protocol,
 			     &req->sa, req->sa_len);
 	} else {
 		sk = req->client_sk;
-		err = send(sk, req->resp, req->resplen, 0);
+		err = send(sk, req->resp, req->resplen, MSG_NOSIGNAL);
 		close(sk);
 	}
 
-	g_free(req->resp);
-	g_free(req);
+	if (err < 0)
+		DBG("Cannot send msg, sk %d proto %d errno %d/%s", sk,
+			protocol, errno, strerror(errno));
+	else
+		DBG("proto %d sent %d bytes to %d", protocol, err, sk);
+
+	destroy_request_data(req);
 
 	return err;
 }
@@ -1643,7 +1735,8 @@ static void destroy_server(struct server_data *server)
 {
 	GList *list;
 
-	DBG("interface %s server %s", server->interface, server->server);
+	DBG("interface %s server %s sock %d", server->interface, server->server,
+		g_io_channel_unix_get_fd(server->channel));
 
 	server_list = g_slist_remove(server_list, server);
 
@@ -1656,7 +1749,7 @@ static void destroy_server(struct server_data *server)
 	g_io_channel_unref(server->channel);
 
 	if (server->protocol == IPPROTO_UDP)
-		connman_info("Removing DNS server %s", server->server);
+		DBG("Removing DNS server %s", server->server);
 
 	g_free(server->incoming_reply);
 	g_free(server->server);
@@ -1721,7 +1814,7 @@ static gboolean tcp_server_event(GIOChannel *channel, GIOCondition condition,
 	if (condition & (G_IO_NVAL | G_IO_ERR | G_IO_HUP)) {
 		GSList *list;
 hangup:
-		DBG("TCP server channel closed");
+		DBG("TCP server channel closed, sk %d", sk);
 
 		/*
 		 * Discard any partial response which is buffered; better
@@ -1764,6 +1857,7 @@ hangup:
 	if ((condition & G_IO_OUT) && !server->connected) {
 		GSList *list;
 		GList *domains;
+		int no_request_sent = TRUE;
 		struct server_data *udp_server;
 
 		udp_server = find_server(server->interface, server->server,
@@ -1789,29 +1883,48 @@ hangup:
 			server->timeout = 0;
 		}
 
-		for (list = request_list; list; list = list->next) {
+		for (list = request_list; list; ) {
 			struct request_data *req = list->data;
+			int status;
 
-			if (req->protocol == IPPROTO_UDP)
+			if (req->protocol == IPPROTO_UDP) {
+				list = list->next;
 				continue;
+			}
 
 			DBG("Sending req %s over TCP", (char *)req->name);
+
+			status = ns_resolv(server, req,
+						req->request, req->name);
+			if (status > 0) {
+				/*
+				 * A cached result was sent,
+				 * so the request can be released
+				 */
+				list = list->next;
+				request_list = g_slist_remove(request_list, req);
+				destroy_request_data(req);
+				continue;
+			}
+
+			if (status < 0) {
+				list = list->next;
+				continue;
+			}
+
+			no_request_sent = FALSE;
 
 			if (req->timeout > 0)
 				g_source_remove(req->timeout);
 
 			req->timeout = g_timeout_add_seconds(30,
 						request_timeout, req);
-			if (ns_resolv(server, req, req->request,
-					req->name) > 0) {
-				/* We sent cached result so no need for timeout
-				 * handler.
-				 */
-				if (req->timeout > 0) {
-					g_source_remove(req->timeout);
-					req->timeout = 0;
-				}
-			}
+			list = list->next;
+		}
+
+		if (no_request_sent == TRUE) {
+			destroy_server(server);
+			return FALSE;
 		}
 
 	} else if (condition & G_IO_IN) {
@@ -1838,7 +1951,7 @@ hangup:
 			reply_len = reply_len_buf[1] | reply_len_buf[0] << 8;
 			reply_len += 2;
 
-			DBG("TCP reply %d bytes", reply_len);
+			DBG("TCP reply %d bytes from %d", reply_len, sk);
 
 			reply = g_try_malloc(sizeof(*reply) + reply_len + 2);
 			if (!reply)
@@ -1939,6 +2052,8 @@ static struct server_data *create_server(const char *interface,
 		return NULL;
 	}
 
+	DBG("sk %d", sk);
+
 	if (interface != NULL) {
 		if (setsockopt(sk, SOL_SOCKET, SO_BINDTODEVICE,
 				interface, strlen(interface) + 1) < 0) {
@@ -2027,21 +2142,18 @@ static struct server_data *create_server(const char *interface,
 	if (protocol == IPPROTO_UDP) {
 		/* Enable new servers by default */
 		data->enabled = TRUE;
-		connman_info("Adding DNS server %s", data->server);
+		DBG("Adding DNS server %s", data->server);
 
 		server_list = g_slist_append(server_list, data);
-
-		return data;
 	}
 
-	return NULL;
+	return data;
 }
 
 static gboolean resolv(struct request_data *req,
 				gpointer request, gpointer name)
 {
 	GSList *list;
-	int status;
 
 	for (list = server_list; list; list = list->next) {
 		struct server_data *data = list->data;
@@ -2056,19 +2168,11 @@ static gboolean resolv(struct request_data *req,
 				G_IO_IN | G_IO_NVAL | G_IO_ERR | G_IO_HUP,
 						udp_server_event, data);
 
-		status = ns_resolv(data, req, request, name);
-		if (status < 0)
-			continue;
-
-		if (status > 0) {
-			if (req->timeout > 0) {
-				g_source_remove(req->timeout);
-				req->timeout = 0;
-			}
-		}
+		if (ns_resolv(data, req, request, name) > 0)
+			return TRUE;
 	}
 
-	return TRUE;
+	return FALSE;
 }
 
 static void append_domain(const char *interface, const char *domain)
@@ -2174,17 +2278,26 @@ void __connman_dnsproxy_flush(void)
 {
 	GSList *list;
 
-	list = request_pending_list;
+	list = request_list;
 	while (list) {
 		struct request_data *req = list->data;
 
 		list = list->next;
 
-		request_pending_list =
-				g_slist_remove(request_pending_list, req);
-		resolv(req, req->request, req->name);
-		g_free(req->request);
-		g_free(req->name);
+		if (resolv(req, req->request, req->name) == TRUE) {
+			/*
+			 * A cached result was sent,
+			 * so the request can be released
+			 */
+			request_list =
+				g_slist_remove(request_list, req);
+			destroy_request_data(req);
+			continue;
+		}
+
+		if (req->timeout > 0)
+			g_source_remove(req->timeout);
+		req->timeout = g_timeout_add_seconds(5, request_timeout, req);
 	}
 }
 
@@ -2198,12 +2311,12 @@ static void dnsproxy_offline_mode(connman_bool_t enabled)
 		struct server_data *data = list->data;
 
 		if (enabled == FALSE) {
-			connman_info("Enabling DNS server %s", data->server);
+			DBG("Enabling DNS server %s", data->server);
 			data->enabled = TRUE;
 			cache_invalidate();
 			cache_refresh();
 		} else {
-			connman_info("Disabling DNS server %s", data->server);
+			DBG("Disabling DNS server %s", data->server);
 			data->enabled = FALSE;
 			cache_invalidate();
 		}
@@ -2234,10 +2347,10 @@ static void dnsproxy_default_changed(struct connman_service *service)
 		struct server_data *data = list->data;
 
 		if (g_strcmp0(data->interface, interface) == 0) {
-			connman_info("Enabling DNS server %s", data->server);
+			DBG("Enabling DNS server %s", data->server);
 			data->enabled = TRUE;
 		} else {
-			connman_info("Disabling DNS server %s", data->server);
+			DBG("Disabling DNS server %s", data->server);
 			data->enabled = FALSE;
 		}
 	}
@@ -2274,7 +2387,7 @@ static int parse_request(unsigned char *buf, int len,
 	if (hdr->qr != 0 || qdcount != 1)
 		return -EINVAL;
 
-	memset(name, 0, size);
+	name[0] = '\0';
 
 	ptr = buf + sizeof(struct domain_hdr);
 	remain = len - sizeof(struct domain_hdr);
@@ -2332,12 +2445,13 @@ static gboolean tcp_listener_event(GIOChannel *channel, GIOCondition condition,
 	unsigned char buf[768];
 	char query[512];
 	struct request_data *req;
-	struct server_data *server;
 	int sk, client_sk, len, err;
 	struct sockaddr_in6 client_addr;
 	socklen_t client_addr_len = sizeof(client_addr);
 	GSList *list;
 	struct listener_data *ifdata = user_data;
+	int waiting_for_connect = FALSE, qtype = 0;
+	struct cache_entry *entry;
 
 	DBG("condition 0x%x", condition);
 
@@ -2364,7 +2478,8 @@ static gboolean tcp_listener_event(GIOChannel *channel, GIOCondition condition,
 	if (len < 2)
 		return TRUE;
 
-	DBG("Received %d bytes (id 0x%04x)", len, buf[2] | buf[3] << 8);
+	DBG("Received %d bytes (id 0x%04x) from %d", len,
+		buf[2] | buf[3] << 8, client_sk);
 
 	err = parse_request(buf + 2, len - 2, query, sizeof(query));
 	if (err < 0 || (g_slist_length(server_list) == 0)) {
@@ -2381,13 +2496,9 @@ static gboolean tcp_listener_event(GIOChannel *channel, GIOCondition condition,
 	req->client_sk = client_sk;
 	req->protocol = IPPROTO_TCP;
 
-	request_id += 2;
-	if (request_id == 0x0000 || request_id == 0xffff)
-		request_id += 2;
-
 	req->srcid = buf[2] | (buf[3] << 8);
-	req->dstid = request_id;
-	req->altid = request_id + 1;
+	req->dstid = get_id();
+	req->altid = get_id();
 	req->request_len = len;
 
 	buf[2] = req->dstid & 0xff;
@@ -2396,63 +2507,82 @@ static gboolean tcp_listener_event(GIOChannel *channel, GIOCondition condition,
 	req->numserv = 0;
 	req->ifdata = (struct listener_data *) ifdata;
 	req->append_domain = FALSE;
-	request_list = g_slist_append(request_list, req);
+
+	/*
+	 * Check if the answer is found in the cache before
+	 * creating sockets to the server.
+	 */
+	entry = cache_check(buf, &qtype, IPPROTO_TCP);
+	if (entry != NULL) {
+		int ttl_left = 0;
+		struct cache_data *data;
+
+		DBG("cache hit %s type %s", query, qtype == 1 ? "A" : "AAAA");
+		if (qtype == 1)
+			data = entry->ipv4;
+		else
+			data = entry->ipv6;
+
+		if (data != NULL) {
+			ttl_left = data->valid_until - time(NULL);
+			entry->hits++;
+
+			send_cached_response(client_sk, data->data,
+					data->data_len, NULL, 0, IPPROTO_TCP,
+					req->srcid, data->answers, ttl_left);
+
+			g_free(req);
+			return TRUE;
+		} else
+			DBG("data missing, ignoring cache for this query");
+	}
 
 	for (list = server_list; list; list = list->next) {
 		struct server_data *data = list->data;
-		GList *domains;
 
 		if (data->protocol != IPPROTO_UDP || data->enabled == FALSE)
 			continue;
 
-		server = create_server(data->interface, NULL,
-					data->server, IPPROTO_TCP);
-
-		/*
-		 * If server is NULL, we're not connected yet.
-		 * Copy the relevant buffers and continue with
-		 * the next nameserver.
-		 * The request will actually be sent once we're
-		 * properly connected over TCP to this nameserver.
-		 */
-		if (server == NULL) {
-			req->request = g_try_malloc0(req->request_len);
-			if (req->request == NULL)
-				return TRUE;
-
-			memcpy(req->request, buf, req->request_len);
-
-			req->name = g_try_malloc0(sizeof(query));
-			if (req->name == NULL) {
-				g_free(req->request);
-				return TRUE;
-			}
-			memcpy(req->name, query, sizeof(query));
-
+		if(create_server(data->interface, NULL,
+					data->server, IPPROTO_TCP) == NULL)
 			continue;
-		}
 
-		if (req->timeout > 0)
-			g_source_remove(req->timeout);
-
-		for (domains = data->domains; domains;
-				domains = domains->next) {
-			char *dom = domains->data;
-
-			DBG("Adding domain %s to %s", dom, server->server);
-
-			server->domains = g_list_append(server->domains,
-						g_strdup(dom));
-		}
-
-		req->timeout = g_timeout_add_seconds(30, request_timeout, req);
-		if (ns_resolv(server, req, buf, query) > 0) {
-			if (req->timeout > 0) {
-				g_source_remove(req->timeout);
-				req->timeout = 0;
-			}
-		}
+		waiting_for_connect = TRUE;
 	}
+
+	if (waiting_for_connect == FALSE) {
+		/* No server is waiting for connect */
+		send_response(client_sk, buf, len, NULL, 0, IPPROTO_TCP);
+		g_free(req);
+		return TRUE;
+	}
+
+	/*
+	 * The server is not connected yet.
+	 * Copy the relevant buffers.
+	 * The request will actually be sent once we're
+	 * properly connected over TCP to the nameserver.
+	 */
+	req->request = g_try_malloc0(req->request_len);
+	if (req->request == NULL) {
+		send_response(client_sk, buf, len, NULL, 0, IPPROTO_TCP);
+		g_free(req);
+		return TRUE;
+	}
+	memcpy(req->request, buf, req->request_len);
+
+	req->name = g_try_malloc0(sizeof(query));
+	if (req->name == NULL) {
+		send_response(client_sk, buf, len, NULL, 0, IPPROTO_TCP);
+		g_free(req->request);
+		g_free(req);
+		return TRUE;
+	}
+	memcpy(req->name, query, sizeof(query));
+
+	req->timeout = g_timeout_add_seconds(30, request_timeout, req);
+
+	request_list = g_slist_append(request_list, req);
 
 	return TRUE;
 }
@@ -2500,13 +2630,9 @@ static gboolean udp_listener_event(GIOChannel *channel, GIOCondition condition,
 	req->client_sk = 0;
 	req->protocol = IPPROTO_UDP;
 
-	request_id += 2;
-	if (request_id == 0x0000 || request_id == 0xffff)
-		request_id += 2;
-
 	req->srcid = buf[0] | (buf[1] << 8);
-	req->dstid = request_id;
-	req->altid = request_id + 1;
+	req->dstid = get_id();
+	req->altid = get_id();
 	req->request_len = len;
 
 	buf[0] = req->dstid & 0xff;
@@ -2514,11 +2640,18 @@ static gboolean udp_listener_event(GIOChannel *channel, GIOCondition condition,
 
 	req->numserv = 0;
 	req->ifdata = (struct listener_data *) ifdata;
-	req->timeout = g_timeout_add_seconds(5, request_timeout, req);
 	req->append_domain = FALSE;
+
+	if (resolv(req, buf, query) == TRUE) {
+		/* a cached result was sent, so the request can be released */
+	        g_free(req);
+		return TRUE;
+	}
+
+	req->timeout = g_timeout_add_seconds(5, request_timeout, req);
 	request_list = g_slist_append(request_list, req);
 
-	return resolv(req, buf, query);
+	return TRUE;
 }
 
 static int create_dns_listener(int protocol, struct listener_data *ifdata)
@@ -2668,35 +2801,12 @@ static int create_listener(struct listener_data *ifdata)
 	return 0;
 }
 
-static void destroy_request_data(struct request_data *req)
-{
-	if (req->timeout > 0)
-		g_source_remove(req->timeout);
-
-	g_free(req->resp);
-	g_free(req->request);
-	g_free(req->name);
-	g_free(req);
-}
-
 static void destroy_listener(struct listener_data *ifdata)
 {
 	GSList *list;
 
 	if (g_strcmp0(ifdata->ifname, "lo") == 0)
 		__connman_resolvfile_remove("lo", NULL, "127.0.0.1");
-
-	for (list = request_pending_list; list; list = list->next) {
-		struct request_data *req = list->data;
-
-		DBG("Dropping pending request (id 0x%04x -> 0x%04x)",
-						req->srcid, req->dstid);
-		destroy_request_data(req);
-		list->data = NULL;
-	}
-
-	g_slist_free(request_pending_list);
-	request_pending_list = NULL;
 
 	for (list = request_list; list; list = list->next) {
 		struct request_data *req = list->data;
@@ -2776,6 +2886,8 @@ int __connman_dnsproxy_init(void)
 	int err;
 
 	DBG("");
+
+	srandom(time(NULL));
 
 	listener_table = g_hash_table_new_full(g_str_hash, g_str_equal,
 							g_free, g_free);
