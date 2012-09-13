@@ -6,7 +6,7 @@ OfflineMode=false
 Enable=false
 
 [Bluetooth]
-Enable=false
+Enable=true
 
 [Wired]
 Enable=true
