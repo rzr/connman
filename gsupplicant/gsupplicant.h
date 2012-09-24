@@ -257,6 +257,16 @@ const char *g_supplicant_peer_get_identifier(GSupplicantPeer *peer);
 const void *g_supplicant_peer_get_device_address(GSupplicantPeer *peer);
 const char *g_supplicant_peer_get_name(GSupplicantPeer *peer);
 
+#if defined TIZEN_EXT
+/*
+* Description: Network client requires additional wifi specific info
+*/
+const unsigned char *g_supplicant_network_get_bssid(
+						GSupplicantNetwork *network);
+unsigned int g_supplicant_network_get_maxrate(GSupplicantNetwork *network);
+const char *g_supplicant_network_get_enc_mode(GSupplicantNetwork *network);
+#endif
+
 struct _GSupplicantCallbacks {
 	void (*system_ready) (void);
 	void (*system_killed) (void);
