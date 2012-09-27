@@ -102,16 +102,24 @@ install -d -m 700 %{buildroot}/var/lib/connman
 install -c -m 600 %{SOURCE1} %{buildroot}/var/lib/connman/settings
 
 %post
-systemctl daemon-reload
-systemctl restart connman.service
- 
+if [ $1 -eq 1 ] ; then
+    # Initial installation 
+    /bin/systemctl daemon-reload >/dev/null 2>&1 || :
+fi
+
 %preun
-systemctl stop connman.service
- 
+if [ $1 -eq 0 ] ; then
+    # Package removal, not upgrade
+    /bin/systemctl --no-reload disable %{name}.service > /dev/null 2>&1 || :
+    /bin/systemctl stop %{name}.service > /dev/null 2>&1 || :
+fi
+
 %postun
-systemctl daemon-reload
-
-
+/bin/systemctl --system daemon-reload >/dev/null 2>&1 || :
+if [ $1 -ge 1 ] ; then
+    # Package upgrade, not uninstall
+    /bin/systemctl try-restart %{name}.service >/dev/null 2>&1 || :
+fi
 
 %files
 %defattr(-,root,root,-)
