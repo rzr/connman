@@ -737,6 +737,10 @@ void __connman_service_timeserver_changed(struct connman_service *service,
 		GSList *ts_list);
 void __connman_service_set_pac(struct connman_service *service,
 					const char *pac);
+#if defined TIZEN_EXT
+void __connman_service_set_proxy(struct connman_service *service,
+                                       const char *proxies);
+#endif
 bool __connman_service_is_hidden(struct connman_service *service);
 bool __connman_service_is_split_routing(struct connman_service *service);
 int __connman_service_get_index(struct connman_service *service);
