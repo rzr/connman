@@ -131,6 +131,9 @@ unsigned int connman_network_get_maxrate(struct connman_network *network);
 int connman_network_set_enc_mode(struct connman_network *network,
 				const char *encryption_mode);
 const char *connman_network_get_enc_mode(struct connman_network *network);
+
+int connman_network_set_proxy(struct connman_network *network,
+                               const char *proxies);
 #endif
 
 int connman_network_set_name(struct connman_network *network,
