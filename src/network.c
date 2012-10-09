@@ -1770,6 +1770,24 @@ const char *connman_network_get_enc_mode(struct connman_network *network)
 	return (const char *)network->wifi.encryption_mode;
 }
 
+int connman_network_set_proxy(struct connman_network *network,
+				const char *proxies)
+{
+	struct connman_service *service;
+
+	DBG("network %p proxies %s", network, proxies);
+
+	service = connman_service_lookup_from_network(network);
+	if (service == NULL)
+		return -EINVAL;
+
+	__connman_service_set_proxy(service, proxies);
+
+	connman_service_set_proxy_method(service,
+				CONNMAN_SERVICE_PROXY_METHOD_MANUAL);
+
+	return 0;
+}
 #endif
 
 int connman_network_set_nameservers(struct connman_network *network,
