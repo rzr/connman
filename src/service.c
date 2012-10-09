@@ -2818,6 +2818,22 @@ void __connman_service_set_pac(struct connman_service *service,
 	proxy_changed(service);
 }
 
+#if defined TIZEN_EXT
+void __connman_service_set_proxy(struct connman_service *service,
+                                       const char *proxies)
+{
+       char **proxies_array = NULL;
+
+       g_strfreev(service->proxies);
+       service->proxies = NULL;
+
+       if (proxies != NULL)
+               proxies_array = g_strsplit(proxies, " ", 0);
+
+       service->proxies = proxies_array;
+}
+#endif
+
 void __connman_service_set_identity(struct connman_service *service,
 					const char *identity)
 {
