@@ -58,6 +58,18 @@ builtin_modules += dundee
 builtin_sources += plugins/dundee.c
 endif
 
+if TELEPHONY
+if TELEPHONY_BUILTIN
+builtin_modules += telephony
+builtin_sources += plugins/telephony.c
+else
+plugin_LTLIBRARIES += plugins/telephony.la
+plugin_objects += $(plugins_telephony_la_OBJECTS)
+plugins_telephony_la_CFLAGS = $(plugin_cflags)
+plugins_telephony_la_LDFLAGS = $(plugin_ldflags)
+endif
+endif
+
 if VPN
 builtin_modules += vpn
 builtin_sources += plugins/vpn.c
