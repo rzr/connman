@@ -135,6 +135,7 @@ const char *connman_network_get_enc_mode(struct connman_network *network);
 
 int connman_network_set_proxy(struct connman_network *network,
                                const char *proxies);
+const char *connman_network_get_ifname(struct connman_network *network);
 #endif
 
 int connman_network_set_name(struct connman_network *network,
