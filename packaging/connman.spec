@@ -152,6 +152,8 @@ systemctl daemon-reload
 %manifest %{name}.manifest
 %license COPYING
 %{_sbindir}/*
+%{_libdir}/connman/plugins/*.so
+%{_datadir}/man/*
 %config %{_sysconfdir}/connman/main.conf
 %config %{_sysconfdir}/dbus-1/system.d/*
 %{_unitdir}/connman.service
