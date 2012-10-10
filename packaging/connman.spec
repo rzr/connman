@@ -91,6 +91,8 @@ install -m644 connman-ntp.service %{buildroot}%{_unitdir}
 %license COPYING
 %manifest connman.manifest
 %{_sbindir}/*
+%{_libdir}/connman/plugins/*.so
+%{_datadir}/man/*
 %config %{_sysconfdir}/dbus-1/system.d/*
 %{_unitdir}/connman.service
 %{_unitdir}/network.target.wants/connman.service
