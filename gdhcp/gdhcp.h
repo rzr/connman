@@ -228,6 +228,7 @@ void g_dhcp_server_set_save_lease(GDHCPServer *dhcp_server,
 				GDHCPSaveLeaseFunc func, gpointer user_data);
 void g_dhcp_server_set_save_ack_lease(GDHCPServer *dhcp_server,
 				GDHCPSaveACKLeaseFunc func, gpointer user_data);
+
 #if defined TIZEN_EXT
 void g_dhcp_client_set_address_known(GDHCPClient *client, bool known);
 #endif
