@@ -524,6 +524,9 @@ static int dhcp_request(struct connman_dhcp *dhcp)
 	GDHCPClientError error;
 	const char *hostname;
 	int index;
+#if defined TIZEN_EXT
+	const char *last_address;
+#endif
 
 	DBG("dhcp %p", dhcp);
 
@@ -569,6 +572,14 @@ static int dhcp_request(struct connman_dhcp *dhcp)
 	service = connman_service_lookup_from_network(dhcp->network);
 	ipconfig = __connman_service_get_ip4config(service);
 
+#if defined TIZEN_EXT
+	last_address = __connman_ipconfig_get_dhcp_address(ipconfig);
+
+	if (last_address != NULL && strlen(last_address) > 0)
+		g_dhcp_client_set_address_known(dhcp_client, true);
+
+	return g_dhcp_client_start(dhcp_client, last_address);
+#else
 	/*
 	 * Clear the addresses at startup so that lease callback will
 	 * take the lease and set ip address properly.
@@ -577,6 +588,7 @@ static int dhcp_request(struct connman_dhcp *dhcp)
 
 	return g_dhcp_client_start(dhcp_client,
 				__connman_ipconfig_get_dhcp_address(ipconfig));
+#endif
 }
 
 static int dhcp_release(struct connman_dhcp *dhcp)
