@@ -149,6 +149,9 @@ struct _GDHCPClient {
 	time_t expire;
 	gboolean retransmit;
 	struct timeval start_time;
+#if defined TIZEN_EXT
+	gboolean init_reboot;
+#endif
 };
 
 static inline void debug(GDHCPClient *client, const char *format, ...)
@@ -436,6 +439,9 @@ static int send_select(GDHCPClient *dhcp_client)
 
 	dhcp_add_option_uint32(&packet, DHCP_REQUESTED_IP,
 						dhcp_client->requested_ip);
+#if defined TIZEN_EXT
+	if (dhcp_client->init_reboot != TRUE)
+#endif
 	dhcp_add_option_uint32(&packet, DHCP_SERVER_ID,
 						dhcp_client->server_ip);
 
@@ -1322,6 +1328,21 @@ static gboolean request_timeout(gpointer user_data)
 {
 	GDHCPClient *dhcp_client = user_data;
 
+#if defined TIZEN_EXT
+	if (dhcp_client->init_reboot == TRUE) {
+		debug(dhcp_client, "DHCPREQUEST of INIT-REBOOT has failed");
+
+		/* Start DHCPDISCOVERY when DHCPREQUEST of INIT-REBOOT has failed */
+		g_dhcp_client_set_address_known(dhcp_client, FALSE);
+
+		dhcp_client->retry_times = 0;
+		dhcp_client->requested_ip = 0;
+
+		g_dhcp_client_start(dhcp_client, dhcp_client->last_address);
+
+		return FALSE;
+	}
+#endif
 	debug(dhcp_client, "request timeout (retries %d)",
 					dhcp_client->retry_times);
 
@@ -2041,6 +2062,9 @@ static gboolean listener_event(GIOChannel *channel, GIOCondition condition,
 
 			dhcp_client->lease_seconds = get_lease(&packet);
 
+#if defined TIZEN_EXT
+			debug(dhcp_client, "lease %d secs", dhcp_client->lease_seconds);
+#endif
 			get_request(dhcp_client, &packet);
 
 			switch_listening_mode(dhcp_client, L_NONE);
@@ -2060,6 +2084,9 @@ static gboolean listener_event(GIOChannel *channel, GIOCondition condition,
 			if (dhcp_client->timeout > 0)
 				g_source_remove(dhcp_client->timeout);
 
+#if defined TIZEN_EXT
+			g_dhcp_client_set_address_known(dhcp_client, FALSE);
+#endif
 			dhcp_client->timeout = g_timeout_add_seconds_full(
 							G_PRIORITY_HIGH, 3,
 							restart_dhcp_timeout,
@@ -2410,6 +2437,15 @@ int g_dhcp_client_start(GDHCPClient *dhcp_client, const char *last_address)
 			dhcp_client->last_address = g_strdup(last_address);
 		}
 	}
+#if defined TIZEN_EXT
+	if (dhcp_client->init_reboot == TRUE) {
+		dhcp_client->requested_ip = addr;
+
+		start_request(dhcp_client);
+
+		return 0;
+	}
+#endif
 	send_discover(dhcp_client, addr);
 
 	dhcp_client->timeout = g_timeout_add_seconds_full(G_PRIORITY_HIGH,
@@ -2789,3 +2825,18 @@ void g_dhcp_client_set_debug(GDHCPClient *dhcp_client,
 	dhcp_client->debug_func = func;
 	dhcp_client->debug_data = user_data;
 }
+#if defined TIZEN_EXT
+void g_dhcp_client_set_address_known(GDHCPClient *dhcp_client, gboolean known)
+{
+	/* DHCPREQUEST during INIT-REBOOT state (rfc2131)
+	 * 4.4.3 Initialization with known network address
+	 * 4.3.2 DHCPREQUEST generated during INIT-REBOOT state
+	 */
+	debug(dhcp_client, "known network address (%d)", known);
+
+	if (dhcp_client->init_reboot == known)
+		return;
+
+	dhcp_client->init_reboot = known;
+}
+#endif

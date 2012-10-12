@@ -197,6 +197,10 @@ void g_dhcp_server_set_lease_time(GDHCPServer *dhcp_server,
 						unsigned int lease_time);
 void g_dhcp_server_set_save_lease(GDHCPServer *dhcp_server,
 				GDHCPSaveLeaseFunc func, gpointer user_data);
+#if defined TIZEN_EXT
+void g_dhcp_client_set_address_known(GDHCPClient *client, gboolean known);
+#endif
+
 #ifdef __cplusplus
 }
 #endif
