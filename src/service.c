@@ -5151,6 +5151,16 @@ static int service_indicate_state(struct connman_service *service)
 
 	if (new_state == CONNMAN_SERVICE_STATE_IDLE &&
 			old_state != CONNMAN_SERVICE_STATE_DISCONNECT) {
+#if !defined TIZEN_EXT
+		/*
+		 * Description: 'service->pending' should be cleared whenever
+		 * connection is finished regardless success or failure.
+		 * If the service is disconnected in configuration state by
+		 * dhcp failure or by the other part of connman, new state is
+		 * 'idle' but old state is 'disconnect'. So it's not cleared.
+		 */
+		reply_pending(service, ECONNABORTED);
+#endif
 
 		__connman_service_disconnect(service);
 	}
@@ -5172,6 +5182,9 @@ static int service_indicate_state(struct connman_service *service)
 	if (new_state == CONNMAN_SERVICE_STATE_IDLE) {
 		bool reconnect;
 
+#if defined TIZEN_EXT
+		reply_pending(service, ECONNABORTED);
+#endif
 		reconnect = get_reconnect_state(service);
 		if (reconnect)
 			__connman_service_auto_connect();
