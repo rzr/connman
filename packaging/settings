@@ -3,7 +3,7 @@
 OfflineMode=false
 
 [WiFi]
-Enable=false
+Enable=true
 
 [Bluetooth]
 Enable=true
