@@ -2,7 +2,7 @@ Name:       connman
 Summary:    Connection Manager
 Version:    1.3
 Release:    1
-Group:      System/Networking
+Group:      System Environment/Daemons
 License:    GPLv2
 URL:        http://connman.net/
 Source0:    %{name}-%{version}.tar.bz2
@@ -79,7 +79,7 @@ Scripts for testing Connman and its functionality
     --enable-loopback=builtin \
     --enable-threads \
     --enable-test \
-    --with-systemdunitdir=/usr/lib/systemd/system
+    --with-systemdunitdir=%{_libdir}/systemd/system
 # disabled for now:
 %ifarch %{ix86}
 ##    --enable-iwmx \
@@ -93,8 +93,8 @@ make %{?jobs:-j%jobs}
 mkdir -p %{buildroot}%{_sysconfdir}/connman
 install -D -m 0644 %{SOURCE2} %{buildroot}%{_sysconfdir}/connman/main.conf
 
-mkdir -p %{buildroot}/usr/lib/systemd/system/network.target.wants
-ln -s ../connman.service %{buildroot}/usr/lib/systemd/system/network.target.wants/connman.service
+mkdir -p %{buildroot}%{_libdir}/systemd/system/network.target.wants
+ln -s ../connman.service %{buildroot}%{_libdir}/systemd/system/network.target.wants/connman.service
 
 %make_install
 
@@ -128,8 +128,8 @@ fi
 #%{_libdir}/%{name}/scripts/*
 %config %{_sysconfdir}/dbus-1/system.d/*.conf
 %config %{_sysconfdir}/connman/*.conf
-/usr/lib/systemd/system/connman.service
-/usr/lib/systemd/system/network.target.wants/connman.service
+%{_libdir}/systemd/system/connman.service
+%{_libdir}/systemd/system/network.target.wants/connman.service
 /var/lib/connman/settings
 
 
