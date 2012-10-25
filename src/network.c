@@ -1532,6 +1532,9 @@ int __connman_network_connect(struct connman_network *network)
 
 	network->connecting = true;
 
+#if defined TIZEN_EXT
+	if (network->type != CONNMAN_NETWORK_TYPE_CELLULAR)
+#endif
 	__connman_device_disconnect(network->device);
 
 	err = network->driver->connect(network);
