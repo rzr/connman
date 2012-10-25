@@ -125,6 +125,15 @@ struct connman_service {
 	bool hidden_service;
 	char *config_file;
 	char *config_entry;
+#if defined TIZEN_EXT
+	/*
+	 * Description: TIZEN implements system global connection management.
+	 *              It's only for PDP (cellular) bearer. Wi-Fi is managed
+	 *		by ConnMan automatically. Reference count can help to
+	 *		manage open/close connection requests by each application.
+	 */
+	int user_pdn_connection_refcount;
+#endif
 };
 
 static bool allow_property_changed(struct connman_service *service);
@@ -140,6 +149,40 @@ struct find_data {
 	struct connman_service *service;
 };
 
+#if defined TIZEN_EXT
+/*
+ * Public APIs to use user_pdn_connection_refcount
+ */
+void connman_service_user_pdn_connection_ref(struct connman_service *service)
+{
+	__sync_fetch_and_add(&service->user_pdn_connection_refcount, 1);
+	DBG("User make a PDP connection with already refcount: %d",
+				service->user_pdn_connection_refcount);
+}
+
+bool connman_service_user_pdn_connection_unref_and_test(
+					struct connman_service *service)
+{
+	DBG("User disconnect PDP connection with already refcount: %d",
+				service->user_pdn_connection_refcount);
+
+	if (__sync_sub_and_fetch(&service->user_pdn_connection_refcount, 1)
+									> 0)
+		return false;
+
+	return true;
+}
+
+bool connman_service_is_no_ref_user_pdn_connection(
+					struct connman_service *service)
+{
+	__sync_synchronize();
+	if (service->user_pdn_connection_refcount == 0)
+		return true;
+
+	return false;
+}
+#endif
 static void compare_path(gpointer value, gpointer user_data)
 {
 	struct connman_service *service = value;
@@ -3896,6 +3939,10 @@ static DBusMessage *connect_service(DBusConnection *conn,
 
 	DBG("service %p", service);
 
+#if defined TIZEN_EXT
+	if (service->type == CONNMAN_SERVICE_TYPE_CELLULAR)
+		connman_service_user_pdn_connection_ref(service);
+#endif
 	if (service->pending)
 		return __connman_error_in_progress(msg);
 
@@ -3952,6 +3999,18 @@ static DBusMessage *disconnect_service(DBusConnection *conn,
 	int err;
 
 	DBG("service %p", service);
+
+#if defined TIZEN_EXT
+	if (service->type == CONNMAN_SERVICE_TYPE_CELLULAR) {
+		if (!connman_service_user_pdn_connection_unref_and_test(service))
+			return __connman_error_failed(msg, EISCONN);
+
+		if (is_connected(service) &&
+				service == __connman_service_get_default())
+			return __connman_error_failed(msg, EISCONN);
+	}
+#endif
+	reply_pending(service, ECONNABORTED);
 
 	service->ignore = true;
 
@@ -4502,6 +4561,9 @@ static void service_initialize(struct connman_service *service)
 	service->provider = NULL;
 
 	service->wps = false;
+#if defined TIZEN_EXT
+	service->user_pdn_connection_refcount = 0;
+#endif
 }
 
 /**
@@ -5194,11 +5256,28 @@ static int service_update_preferred_order(struct connman_service *default_servic
 	return -EALREADY;
 }
 
+#if defined TIZEN_EXT
+static bool __connman_service_can_drop_cellular(
+		struct connman_service *cellular)
+{
+	if (cellular->type == CONNMAN_SERVICE_TYPE_CELLULAR &&
+				is_connected(cellular))
+		if (connman_service_is_no_ref_user_pdn_connection(cellular))
+			return true;
+	return false;
+}
+#endif
+
 static void single_connected_tech(struct connman_service *allowed)
 {
 	struct connman_service *service;
 	GSList *services = NULL, *list;
 	GList *iter;
+
+#if defined TIZEN_EXT
+	if (allowed->type == CONNMAN_SERVICE_TYPE_CELLULAR)
+		return;
+#endif
 
 	DBG("keeping %p %s", allowed, allowed->path);
 
@@ -5210,6 +5289,10 @@ static void single_connected_tech(struct connman_service *allowed)
 
 		if (service == allowed)
 			continue;
+#if defined TIZEN_EXT
+		if (!__connman_service_can_drop_cellular(service))
+			continue;
+#endif
 
 		services = g_slist_prepend(services, service);
 	}
@@ -5653,6 +5736,11 @@ int __connman_service_ipconfig_indicate_state(struct connman_service *service,
 	if (!ipconfig)
 		return -EINVAL;
 
+#if defined TIZEN_EXT
+	if (new_state == CONNMAN_SERVICE_STATE_FAILURE &&
+	    service->type == CONNMAN_SERVICE_TYPE_CELLULAR)
+		service->user_pdn_connection_refcount = 0;
+#endif
 	/* Any change? */
 	if (old_state == new_state)
 		return -EALREADY;
