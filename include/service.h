@@ -115,6 +115,27 @@ char **connman_service_get_proxy_servers(struct connman_service *service);
 char **connman_service_get_proxy_excludes(struct connman_service *service);
 const char *connman_service_get_proxy_url(struct connman_service *service);
 const char *connman_service_get_proxy_autoconfig(struct connman_service *service);
+#if defined TIZEN_EXT
+/*
+ * Increase reference count of user-initiated packet data network connection
+ */
+void connman_service_user_pdn_connection_ref(struct connman_service *service);
+
+/*
+ * Decrease reference count of user initiated packet data network connection
+ * and return TRUE if counter is zero.
+ */
+connman_bool_t connman_service_user_pdn_connection_unref_and_test(
+					struct connman_service *service);
+
+/*
+ * Test reference count of user initiated packet data network connection
+ * and return TRUE if counter is zero. No impact to reference count
+ */
+connman_bool_t connman_service_is_no_ref_user_pdn_connection(
+					struct connman_service *service);
+#endif
+
 connman_bool_t connman_service_get_favorite(struct connman_service *service);
 
 struct connman_service *connman_service_lookup_from_network(struct connman_network *network);

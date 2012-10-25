@@ -127,6 +127,15 @@ struct connman_service {
 	connman_bool_t hidden_service;
 	char *config_file;
 	char *config_entry;
+#if defined TIZEN_EXT
+	/*
+	 * Description: TIZEN implements system global connection management.
+	 *              It's only for PDP (cellular) bearer. Wi-Fi is managed
+	 *		by ConnMan automatically. Reference count can help to
+	 *		manage open/close connection requests by each application.
+	 */
+	int user_pdn_connection_refcount;
+#endif
 };
 
 static connman_bool_t allow_property_changed(struct connman_service *service);
@@ -142,6 +151,40 @@ struct find_data {
 	struct connman_service *service;
 };
 
+#if defined TIZEN_EXT
+/*
+ * Public APIs to use user_pdn_connection_refcount
+ */
+void connman_service_user_pdn_connection_ref(struct connman_service *service)
+{
+	__sync_fetch_and_add(&service->user_pdn_connection_refcount, 1);
+	DBG("User make a PDP connection with already refcount: %d",
+				service->user_pdn_connection_refcount);
+}
+
+connman_bool_t connman_service_user_pdn_connection_unref_and_test(
+					struct connman_service *service)
+{
+	DBG("User disconnect PDP connection with already refcount: %d",
+				service->user_pdn_connection_refcount);
+
+	if (__sync_sub_and_fetch(&service->user_pdn_connection_refcount, 1)
+									> 0)
+		return FALSE;
+
+	return TRUE;
+}
+
+connman_bool_t connman_service_is_no_ref_user_pdn_connection(
+					struct connman_service *service)
+{
+	__sync_synchronize();
+	if (service->user_pdn_connection_refcount == 0)
+		return TRUE;
+
+	return FALSE;
+}
+#endif
 static void compare_path(gpointer value, gpointer user_data)
 {
 	struct connman_service *service = value;
@@ -3822,6 +3865,10 @@ static DBusMessage *connect_service(DBusConnection *conn,
 
 	DBG("service %p", service);
 
+#if defined TIZEN_EXT
+	if (service->type == CONNMAN_SERVICE_TYPE_CELLULAR)
+		connman_service_user_pdn_connection_ref(service);
+#endif
 	if (service->pending != NULL)
 		return __connman_error_in_progress(msg);
 
@@ -3890,6 +3937,16 @@ static DBusMessage *disconnect_service(DBusConnection *conn,
 
 	DBG("service %p", service);
 
+#if defined TIZEN_EXT
+	if (service->type == CONNMAN_SERVICE_TYPE_CELLULAR) {
+		if (connman_service_user_pdn_connection_unref_and_test(service) != TRUE)
+			return __connman_error_failed(msg, EISCONN);
+
+		if (is_connected(service) == TRUE &&
+				service == __connman_service_get_default())
+			return __connman_error_failed(msg, EISCONN);
+	}
+#endif
 	reply_pending(service, ECONNABORTED);
 
 	service->ignore = TRUE;
@@ -4436,6 +4493,9 @@ static void service_initialize(struct connman_service *service)
 	service->provider = NULL;
 
 	service->wps = FALSE;
+#if defined TIZEN_EXT
+	service->user_pdn_connection_refcount = 0;
+#endif
 }
 
 /**
@@ -5117,18 +5177,38 @@ static int service_update_preferred_order(struct connman_service *default_servic
 	return -EALREADY;
 }
 
+#if defined TIZEN_EXT
+static connman_bool_t __connman_service_can_drop_cellular(
+		struct connman_service *cellular)
+{
+	if (cellular->type == CONNMAN_SERVICE_TYPE_CELLULAR &&
+				is_connected(cellular) == TRUE)
+		if (connman_service_is_no_ref_user_pdn_connection(cellular)
+								== TRUE)
+			return TRUE;
+	return FALSE;
+}
+#endif
+
 static void single_connected_tech(struct connman_service *allowed)
 {
 	GSList *services = NULL;
 	GSequenceIter *iter;
 	GSList *list;
 
+#if defined TIZEN_EXT
+	if (allowed->type == CONNMAN_SERVICE_TYPE_CELLULAR)
+		return;
+#endif
 	iter = g_sequence_get_begin_iter(service_list);
 
 	while (g_sequence_iter_is_end(iter) == FALSE) {
 		struct connman_service *service = g_sequence_get(iter);
 
 		if (service != allowed && is_connected(service))
+#if defined TIZEN_EXT
+			if (__connman_service_can_drop_cellular(service) == TRUE)
+#endif
 			services = g_slist_prepend(services, service);
 
 		iter = g_sequence_iter_next(iter);
@@ -5561,6 +5641,11 @@ int __connman_service_ipconfig_indicate_state(struct connman_service *service,
 	if (ipconfig == NULL)
 		return -EINVAL;
 
+#if defined TIZEN_EXT
+	if (new_state == CONNMAN_SERVICE_STATE_FAILURE &&
+	    service->type == CONNMAN_SERVICE_TYPE_CELLULAR)
+		service->user_pdn_connection_refcount = 0;
+#endif
 	/* Any change? */
 	if (old_state == new_state)
 		return -EALREADY;
