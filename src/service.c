@@ -1412,6 +1412,24 @@ static void reset_stats(struct connman_service *service)
 	g_timer_reset(service->stats_roaming.timer);
 }
 
+#if defined TIZEN_EXT
+static bool __connman_service_is_internet_profile(
+		struct connman_service *cellular)
+{
+	DBG("Service path: %s", cellular->path);
+
+	const char internet_suffix[] = "_1";
+	char *suffix = NULL;
+
+	suffix = strrchr(cellular->path, '_');
+	if (strcmp(suffix, internet_suffix) == 0)
+		return TRUE;
+
+	DBG("Not Internet profile.");
+	return FALSE;
+}
+#endif
+
 struct connman_service *__connman_service_get_default(void)
 {
 	struct connman_service *service;
@@ -1420,6 +1438,17 @@ struct connman_service *__connman_service_get_default(void)
 		return NULL;
 
 	service = service_list->data;
+
+#if defined TIZEN_EXT
+	if (service->type == CONNMAN_SERVICE_TYPE_CELLULAR &&
+		!__connman_service_is_internet_profile(service)) {
+
+		if (!service_list->next)
+			return NULL;
+
+		service = service_list->next->data;
+	}
+#endif
 
 	if (!is_connected(service))
 		return NULL;
@@ -3748,6 +3777,11 @@ static bool auto_connect_service(GList *services,
 			continue;
 		}
 
+#if defined TIZEN_EXT
+		if (service->type == CONNMAN_SERVICE_TYPE_CELLULAR &&
+			!__connman_service_is_internet_profile(service))
+			continue;
+#endif
 		DBG("service %p %s %s", service, service->name,
 			(preferred) ? "preferred" : reason2string(reason));
 
@@ -5528,6 +5562,10 @@ static int service_indicate_state(struct connman_service *service)
 
 	service_list_sort();
 
+#if defined TIZEN_EXT
+	if (!__connman_service_get_default())
+		__connman_service_auto_connect(CONNMAN_SERVICE_CONNECT_REASON_AUTO);
+#endif
 	__connman_connection_update_gateway();
 
 	if ((old_state == CONNMAN_SERVICE_STATE_ONLINE &&
