@@ -49,6 +49,7 @@ Header files and development files for connman.
 
 %build
 cp %{SOURCE1001} .
+%autogen
 %configure \
             --enable-threads \
             --enable-wifi=builtin \
