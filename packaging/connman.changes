@@ -1,0 +1,6 @@
+* Wed Dec 19 2012 Anas Nashif <anas.nashif@intel.com> 1.9@cda8eb9
+- rebase to 1.9
+
+* Wed Dec 19 2012 Anas Nashif <anas.nashif@intel.com> 1.9@2278f7b
+- require python-gobject
+
