@@ -52,6 +52,7 @@ cp %{SOURCE1001} .
 ./bootstrap
 %configure \
             --enable-threads \
+            --enable-client \
             --enable-wifi=builtin \
 %if 0%{?enable_connman_features}
             %connman_features \
