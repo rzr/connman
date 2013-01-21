@@ -665,7 +665,12 @@ static void parse_response(struct resolv_nameserver *nameserver,
 
 	debug(resolv, "response from %s", nameserver->address);
 
+#if defined TIZEN_EXT
+	if (ns_initparse(buf, len, &msg) == -1)
+		return;
+#else
 	ns_initparse(buf, len, &msg);
+#endif
 
 	list = g_queue_find_custom(resolv->query_queue,
 			GUINT_TO_POINTER(ns_msg_id(msg)), compare_query_msgid);
@@ -713,7 +718,12 @@ static void parse_response(struct resolv_nameserver *nameserver,
 		lookup->ipv4_status = status;
 
 	for (i = 0; i < count; i++) {
+#if defined TIZEN_EXT
+		if (ns_parserr(&msg, ns_s_an, i, &rr) == -1)
+			continue;
+#else
 		ns_parserr(&msg, ns_s_an, i, &rr);
+#endif
 
 		if (ns_rr_class(rr) != ns_c_in)
 			continue;
