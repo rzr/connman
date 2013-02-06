@@ -73,18 +73,18 @@ ln -s ../connman.service %{buildroot}%{_unitdir}/network.target.wants/connman.se
 %files
 %manifest connman.manifest
 %{_sbindir}/*
-#%{_libdir}/connman/plugins/*.so
-#%{_datadir}/dbus-1/services/*
-%{_sysconfdir}/dbus-1/system.d/*
-#%{_sysconfdir}/connman/main.conf
-#%{_sysconfdir}/dbus-1/system.d/*.conf
+%config %{_sysconfdir}/dbus-1/system.d/*
 %{_unitdir}/connman.service
 %{_unitdir}/network.target.wants/connman.service
 %{_unitdir}/multi-user.target.wants/connman.service
+
+
 %files test
 %{_libdir}/%{name}/test/*
-
 
 %files devel
 %{_includedir}/connman/*.h
 %{_libdir}/pkgconfig/*.pc
+
+
+%changelog
