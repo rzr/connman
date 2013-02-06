@@ -1,3 +1,6 @@
+* Wed Feb 06 2013 Anas Nashif <anas.nashif@intel.com> submit/trunk/20121220.002834@14475ab
+- Fixed rpmlint warnings/errors
+
 * Wed Dec 19 2012 Anas Nashif <anas.nashif@intel.com> submit/trunk/20121219.192236@f782f97
 - enable client
 
