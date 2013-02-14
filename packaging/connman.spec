@@ -1,13 +1,12 @@
 Name:           connman
-Version:        1.9
+Version:        1.11
 Release:        1
 License:        GPL-2.0
 Summary:        Connection Manager
 Url:            http://connman.net
-Group:          System/Networking
+Group:          Connectivity/Connection Management
 Source0:        %{name}-%{version}.tar.xz
-Source1001:     packaging/connman.manifest
-Patch0:		dbus.patch
+Source1001:     connman.manifest
 BuildRequires:  pkgconfig(dbus-1)
 BuildRequires:  pkgconfig(glib-2.0)
 BuildRequires:  pkgconfig(libiptc)
@@ -25,7 +24,7 @@ within embedded devices running the Linux operating system.
 
 %package test
 Summary:        Test Scripts for Connection Manager
-Group:          Development/Tools
+Group:          Development/Testing
 Requires:       %{name} = %{version}
 Requires:       dbus-python
 Requires:       python-gobject
@@ -44,11 +43,10 @@ Header files and development files for connman.
 
 %prep
 %setup -q
-%patch0 -p1
 
+cp %{SOURCE1001} .
 
 %build
-cp %{SOURCE1001} .
 ./bootstrap
 %configure \
             --enable-threads \
