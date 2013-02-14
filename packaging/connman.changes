@@ -1,3 +1,6 @@
+* Thu Feb 14 2013 Anas Nashif <anas.nashif@intel.com> 1.11@e8d3a2b
+- Update to 1.11
+
 * Wed Feb 06 2013 Anas Nashif <anas.nashif@intel.com> submit/trunk/20121220.002834@14475ab
 - Fixed rpmlint warnings/errors
 
