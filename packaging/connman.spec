@@ -1,5 +1,5 @@
 Name:           connman
-Version:        1.11
+Version:        1.12
 Release:        1
 License:        GPL-2.0
 Summary:        Connection Manager
@@ -12,6 +12,7 @@ BuildRequires:  pkgconfig(glib-2.0)
 BuildRequires:  pkgconfig(libiptc)
 BuildRequires:  pkgconfig(xtables)
 BuildRequires:	pkgconfig(gnutls) 
+BuildRequires:  openconnect
 BuildRequires:  readline-devel
 Requires:       systemd
 Requires(post):   systemd
@@ -21,6 +22,15 @@ Requires(postun): systemd
 %description
 Connection Manager provides a daemon for managing Internet connections
 within embedded devices running the Linux operating system.
+
+%package plugin-openconnect
+Summary:        Openconnect Support for Connman
+Group:          Connectivity/Connection Management
+Requires:       %{name} = %{version}
+Requires:       openconnect
+
+%description plugin-openconnect
+Openconnect Support for Connman.
 
 %package test
 Summary:        Test Scripts for Connection Manager
@@ -51,7 +61,9 @@ cp %{SOURCE1001} .
 %configure \
             --enable-threads \
             --enable-client \
+            --enable-pacrunner \
             --enable-wifi=builtin \
+            --enable-openconnect \
 %if 0%{?enable_connman_features}
             %connman_features \
 %endif
@@ -84,5 +96,10 @@ ln -s ../connman.service %{buildroot}%{_unitdir}/network.target.wants/connman.se
 %{_includedir}/connman/*.h
 %{_libdir}/pkgconfig/*.pc
 
+%files plugin-openconnect
+%{_unitdir}/connman-vpn.service
+%{_libdir}/connman/plugins-vpn/openconnect.so
+%{_libdir}/connman/scripts/openconnect-script
+%{_datadir}/dbus-1/system-services/net.connman.vpn.service
 
 %changelog
