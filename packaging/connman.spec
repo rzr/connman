@@ -6,6 +6,7 @@ Summary:        Connection Manager
 Url:            http://connman.net
 Group:          System/Networking
 Source0:        %{name}-%{version}.tar.gz
+Patch0:			0001-Tizen-Change-MAXIMUM_RETRIES-to-1-for-tizen-wpa_supp.patch		
 BuildRequires:  pkgconfig(dbus-1)
 BuildRequires:  pkgconfig(glib-2.0)
 BuildRequires:  pkgconfig(libiptc)
@@ -42,7 +43,7 @@ Header files and development files for connman.
 
 %prep
 %setup -q
-
+%patch0 -p1
 
 %build
 CFLAGS+=" -DTIZEN_EXT -lsmack"

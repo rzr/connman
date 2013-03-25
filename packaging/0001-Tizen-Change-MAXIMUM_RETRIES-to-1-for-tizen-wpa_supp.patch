@@ -1,0 +1,48 @@
+From 30057bd15d76a93971d9b5caeaa7e19fc8a9110c Mon Sep 17 00:00:00 2001
+From: "Liu, Guoqiang" <guoqiangx,liu@intel.com>
+Date: Wed, 6 Mar 2013 13:04:59 +0800
+Subject: [PATCH] Tizen: Change MAXIMUM_RETRIES to 1 for tizen wpa_supplicant
+
+	In upstream version, wpa_supplicant will try to reassociate
+more than 4 times util it received a message DEASSOC when connect a
+AP with a wrong password, but the package wpasupplicant added it's
+own association policy, and there is only once associate in this
+version. but the MAXIMUM_RETRIES in connman is 4, change it to 1.
+
+Change-Id: Ie959e225555aa96b2baddad3baa4ccbde06f72a2
+---
+ packaging/connman.spec |    2 +-
+ plugins/wifi.c         |    5 +++++
+ 2 files changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/packaging/connman.spec b/packaging/connman.spec
+index 9d1ebfe..047d637 100644
+--- a/packaging/connman.spec
++++ b/packaging/connman.spec
+@@ -1,5 +1,5 @@
+ Name:           connman
+-Version:        1.3_8
++Version:        1.3_9
+ Release:        1
+ License:        GPLv2
+ Summary:        Connection Manager
+diff --git a/plugins/wifi.c b/plugins/wifi.c
+index c50f877..c6dbede 100644
+--- a/plugins/wifi.c
++++ b/plugins/wifi.c
+@@ -56,7 +56,12 @@
+ 
+ #define CLEANUP_TIMEOUT   8	/* in seconds */
+ #define INACTIVE_TIMEOUT  12	/* in seconds */
++
++#if defined TIZEN_EXT
++#define MAXIMUM_RETRIES   1
++#else
+ #define MAXIMUM_RETRIES   4
++#endif
+ 
+ #define BGSCAN_DEFAULT "simple:30:-45:300"
+ #define AUTOSCAN_DEFAULT "exponential:3:300"
+-- 
+1.7.9.5
+

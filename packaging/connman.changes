@@ -1,0 +1,5 @@
+* Mon Mar 25 18:42:58 UTC 2013 - tracy.graydon@intel.com
+- Add 2.0 branch, pushed from framework/connectivity/connman tizen_2.0 branch
+- Add .changes file
+- Add Guoqiang's patch
+
