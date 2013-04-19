@@ -11,3 +11,6 @@ StandardOutput=null
 
 [Install]
 WantedBy=multi-user.target
+
+[WiFi]
+Enable=true
