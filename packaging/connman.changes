@@ -1,3 +1,6 @@
+* Sun Apr 21 2013 Rusty Lynch <rusty.lynch@intel.com> accepted/2.0/20130325.205008@5301d91
+- wifi: Fix tethering with kernel 3.5
+
 * Mon Mar 25 18:42:58 UTC 2013 - tracy.graydon@intel.com
 - Add 2.0 branch, pushed from framework/connectivity/connman tizen_2.0 branch
 - Add .changes file
