@@ -1,6 +1,6 @@
 Name:           connman
 Version:        1.12
-Release:        1
+Release:        0
 License:        GPL-2.0
 Summary:        Connection Manager
 Url:            http://connman.net
@@ -88,6 +88,9 @@ ln -s ../connman.service %{buildroot}%{_unitdir}/network.target.wants/connman.se
 %{_unitdir}/network.target.wants/connman.service
 %{_unitdir}/multi-user.target.wants/connman.service
 
+%post
+conf=/var/lib/connman/settings
+[ -r $conf ] || printf '[WiFi]\nEnable=True\n' > $conf
 
 %files test
 %{_libdir}/%{name}/test/*
@@ -101,5 +104,3 @@ ln -s ../connman.service %{buildroot}%{_unitdir}/network.target.wants/connman.se
 %{_libdir}/connman/plugins-vpn/openconnect.so
 %{_libdir}/connman/scripts/openconnect-script
 %{_datadir}/dbus-1/system-services/net.connman.vpn.service
-
-%changelog
