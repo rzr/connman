@@ -80,6 +80,17 @@ ln -s ../connman.service %{buildroot}%{_unitdir}/network.target.wants/connman.se
 
 %install_service multi-user.target.wants connman.service
 
+
+%post
+d=/var/lib/%{name}
+f=$d/settings
+install -d $d
+[ -r $f ] || printf '[WiFi]\nEnable=true\n' > $f
+
+%postun
+rm -f /var/lib/connman/settings
+
+
 %files
 %manifest connman.manifest
 %{_sbindir}/*
@@ -87,10 +98,6 @@ ln -s ../connman.service %{buildroot}%{_unitdir}/network.target.wants/connman.se
 %{_unitdir}/connman.service
 %{_unitdir}/network.target.wants/connman.service
 %{_unitdir}/multi-user.target.wants/connman.service
-
-%post
-conf=/var/lib/connman/settings
-[ -r $conf ] || printf '[WiFi]\nEnable=True\n' > $conf
 
 %files test
 %{_libdir}/%{name}/test/*
