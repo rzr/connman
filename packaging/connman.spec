@@ -82,10 +82,17 @@ ln -s ../connman.service %{buildroot}%{_unitdir}/network.target.wants/connman.se
 
 
 %post
-d=/var/lib/%{name}
-f=$d/settings
-install -d $d
-[ -r $f ] || printf '[WiFi]\nEnable=true\n' > $f
+d="/var/lib/%{name}"
+f="$d/settings"
+install -d "$d"
+[ -r $f ] || cat<<EOF  > "$f"
+[WiFi]
+Enable=true
+
+[Bluetooth]
+Enable=true
+
+EOF
 
 %postun
 rm -f /var/lib/connman/settings
