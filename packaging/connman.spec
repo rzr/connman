@@ -81,6 +81,7 @@ ln -s ../connman.service %{buildroot}%{_unitdir}/network.target.wants/connman.se
 %install_service multi-user.target.wants connman.service
 
 %files
+%license COPYING
 %manifest connman.manifest
 %{_sbindir}/*
 %config %{_sysconfdir}/dbus-1/system.d/*
