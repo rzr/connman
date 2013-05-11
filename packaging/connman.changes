@@ -1,3 +1,6 @@
+* Sat May 11 2013 Anas Nashif <anas.nashif@intel.com> submit/tizen/20130509.173516@0cc61d5
+- Set license using %license
+
 * Mon Mar 11 2013 Anas Nashif <anas.nashif@intel.com> 1.12@9c68e67
 - add openconnect plugin
 
