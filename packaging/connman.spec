@@ -80,6 +80,9 @@ ln -s ../connman.service %{buildroot}%{_unitdir}/network.target.wants/connman.se
 
 %install_service multi-user.target.wants connman.service
 
+
+%docs_package 
+
 %files
 %license COPYING
 %manifest connman.manifest
