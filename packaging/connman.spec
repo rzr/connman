@@ -9,6 +9,7 @@ Summary:        Connection Manager
 Url:            http://connman.net
 Group:          Connectivity/Connection Management
 Source0:        %{name}-%{version}.tar.xz
+Source1:        settings
 Source10:       40-connman-ntp.list
 Source11:       connman-ntp.service
 Source1001:     connman.manifest
@@ -60,6 +61,8 @@ Header files and development files for connman.
 cp %{SOURCE1001} .
 
 %build
+CFLAGS+=" -DTIZEN_EXT"
+
 ./bootstrap
 %configure \
             --enable-threads \
@@ -70,6 +73,9 @@ cp %{SOURCE1001} .
             --enable-openconnect \
 %endif
             --enable-test \
+            --enable-loopback \
+            --enable-ethernet \
+            --disable-linklocaladdr \
             --with-systemdunitdir=%{_unitdir}
 
 make %{?_smp_mflags}
@@ -85,8 +91,23 @@ install -m644 %{SOURCE11} %{buildroot}%{_unitdir}
 %install_service multi-user.target.wants connman-ntp.service
 %endif
 
+mkdir -p %{buildroot}%{_localstatedir}/lib/connman
+cp %{SOURCE1} %{buildroot}%{_localstatedir}/lib/connman/settings
+mkdir -p %{buildroot}%{_sysconfdir}/connman
+cp src/main.conf %{buildroot}%{_sysconfdir}/connman/main.conf
+
 %install_service network.target.wants connman.service
 %install_service multi-user.target.wants connman.service
+
+%post
+systemctl daemon-reload
+systemctl restart connman.service
+
+%preun
+systemctl stop connman.service
+
+%postun
+systemctl daemon-reload
 
 %docs_package
 
@@ -96,6 +117,9 @@ install -m644 %{SOURCE11} %{buildroot}%{_unitdir}
 %manifest connman.manifest
 %{_sbindir}/*
 %{_libdir}/connman/plugins/*.so
+%{_datadir}/man/*
+%config %{_sysconfdir}/connman/main.conf
+%attr(600,root,root) %{_localstatedir}/lib/connman/settings
 %config %{_sysconfdir}/dbus-1/system.d/*
 %{_unitdir}/connman.service
 %{_unitdir}/network.target.wants/connman.service
