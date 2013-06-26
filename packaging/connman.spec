@@ -7,6 +7,7 @@ Url:            http://connman.net
 Group:          Connectivity/Connection Management
 Source0:        %{name}-%{version}.tar.xz
 Source1001:     connman.manifest
+BuildRequires:  systemd
 BuildRequires:  pkgconfig(dbus-1)
 BuildRequires:  pkgconfig(glib-2.0)
 BuildRequires:  pkgconfig(libiptc)
@@ -14,10 +15,7 @@ BuildRequires:  pkgconfig(xtables)
 BuildRequires:	pkgconfig(gnutls) 
 BuildRequires:  openconnect
 BuildRequires:  readline-devel
-Requires:       systemd
-Requires(post):   systemd
-Requires(preun):  systemd
-Requires(postun): systemd
+%systemd_requires
 
 %description
 Connection Manager provides a daemon for managing Internet connections
@@ -75,11 +73,14 @@ make %{?_smp_mflags}
 %install
 %make_install
 
-mkdir -p %{buildroot}%{_unitdir}/network.target.wants
-ln -s ../connman.service %{buildroot}%{_unitdir}/network.target.wants/connman.service
+mkdir -p %{buildroot}/usr/lib/systemd/ntp-units.d
+install -m644 40-connman-ntp.list %{buildroot}/usr/lib/systemd/ntp-units.d
+install -m644 connman-ntp.service %{buildroot}%{_unitdir}
 
+%install_service network.target.wants connman.service
+%install_service network.target.wants connman-ntp.service
 %install_service multi-user.target.wants connman.service
-
+%install_service multi-user.target.wants connman-ntp.service
 
 %docs_package 
 
@@ -91,7 +92,11 @@ ln -s ../connman.service %{buildroot}%{_unitdir}/network.target.wants/connman.se
 %{_unitdir}/connman.service
 %{_unitdir}/network.target.wants/connman.service
 %{_unitdir}/multi-user.target.wants/connman.service
-
+%{_unitdir}/connman-ntp.service
+%{_unitdir}/multi-user.target.wants/connman-ntp.service
+%{_unitdir}/network.target.wants/connman-ntp.service
+%dir /usr/lib/systemd/ntp-units.d
+/usr/lib/systemd/ntp-units.d/40-connman-ntp.list
 
 %files test
 %{_libdir}/%{name}/test/*
