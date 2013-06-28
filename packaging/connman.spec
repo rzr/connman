@@ -91,6 +91,7 @@ install -m644 %{SOURCE11} %{buildroot}%{_unitdir}
 %docs_package
 
 %files
+%manifest %{name}.manifest
 %license COPYING
 %manifest connman.manifest
 %{_sbindir}/*
@@ -108,14 +109,17 @@ install -m644 %{SOURCE11} %{buildroot}%{_unitdir}
 %endif
 
 %files test
+%manifest %{name}.manifest
 %{_libdir}/%{name}/test/*
 
 %files devel
+%manifest %{name}.manifest
 %{_includedir}/connman/*.h
 %{_libdir}/pkgconfig/*.pc
 
 %if %{with connman_openconnect}
 %files plugin-openconnect
+%manifest %{name}.manifest
 %{_unitdir}/connman-vpn.service
 %{_libdir}/connman/plugins-vpn/openconnect.so
 %{_libdir}/connman/scripts/openconnect-script
