@@ -1,3 +1,6 @@
+* Fri Jun 28 2013 Corentin Lecouvey <corentin.lecouvey@eurogiciel.fr> accepted/tizen/20130614.152842@afff321
+- Add systemd service to manage ConnMan NTP feature (#TZPC-1974)
+
 * Fri Jun 14 2013 Anas Nashif <anas.nashif@intel.com> submit/tizen/20130614.081002@fb8adbd
 - Update to 1.15
 
