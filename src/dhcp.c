@@ -368,6 +368,17 @@ static void ipv4ll_available_cb(GDHCPClient *dhcp_client, gpointer user_data)
 	if (service == NULL)
 		return;
 
+#if defined DISABLE_LINK_LOCAL_ADDR
+	dhcp_invalidate(dhcp, TRUE);
+
+	__connman_service_ipconfig_indicate_state(service,
+			CONNMAN_SERVICE_STATE_IDLE,
+			CONNMAN_IPCONFIG_TYPE_IPV4);
+	__connman_service_ipconfig_indicate_state(service,
+			CONNMAN_SERVICE_STATE_IDLE,
+			CONNMAN_IPCONFIG_TYPE_IPV6);
+	return;
+#endif
 	ipconfig = __connman_service_get_ip4config(service);
 	if (ipconfig == NULL)
 		return;
