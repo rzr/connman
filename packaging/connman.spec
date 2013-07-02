@@ -6,6 +6,8 @@ Summary:        Connection Manager
 Url:            http://connman.net
 Group:          Connectivity/Connection Management
 Source0:        %{name}-%{version}.tar.xz
+Source10:       40-connman-ntp.list
+Source11:       connman-ntp.service
 Source1001:     connman.manifest
 BuildRequires:  systemd
 BuildRequires:  pkgconfig(dbus-1)
@@ -51,7 +53,8 @@ Header files and development files for connman.
 
 %prep
 %setup -q
-
+cp %{SOURCE10} .
+cp %{SOURCE11} .
 cp %{SOURCE1001} .
 
 %build
