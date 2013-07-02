@@ -1,3 +1,7 @@
+* Tue Jul 02 2013 Corentin Lecouvey <corentin.lecouvey@eurogiciel.fr> accepted/tizen/20130701.201407@745c580
+- packaging: move NTP ConnMan scripts to packaging directory
+- Add option to disable link local address" into tizen
+
 * Fri Jun 28 2013 Corentin Lecouvey <corentin.lecouvey@eurogiciel.fr> accepted/tizen/20130614.152842@afff321
 - Add systemd service to manage ConnMan NTP feature (#TZPC-1974)
 
