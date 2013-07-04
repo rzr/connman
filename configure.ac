@@ -67,6 +67,12 @@ AC_ARG_ENABLE(hh2serial-gps,
 AM_CONDITIONAL(HH2SERIAL_GPS, test "${enable_hh2serial_gps}" != "no")
 AM_CONDITIONAL(HH2SERIAL_GPS_BUILTIN, test "${enable_hh2serial_gps}" = "builtin")
 
+AC_ARG_ENABLE(telephony,
+	AC_HELP_STRING([--enable-telephony], [enable Telephony support]),
+			[enable_telephony=${enableval}], [enable_telephony="yes"])
+AM_CONDITIONAL(TELEPHONY, test "${enable_telephony}" != "no")
+AM_CONDITIONAL(TELEPHONY_BUILTIN, test "${enable_telephony}" = "builtin")
+
 AC_ARG_WITH(openconnect, AC_HELP_STRING([--with-openconnect=PROGRAM],
         [specify location of openconnect binary]), [path_openconnect=${withval}])
 
