@@ -1788,6 +1788,26 @@ int connman_network_set_proxy(struct connman_network *network,
 
 	return 0;
 }
+
+const char *connman_network_get_ifname(struct connman_network *network)
+{
+	struct connman_service *service;
+	struct connman_ipconfig *ipconfig;
+	const char *ifname = NULL;
+
+	service = connman_service_lookup_from_network(network);
+	if (service == NULL)
+		return NULL;
+
+	ipconfig = __connman_service_get_ip4config(service);
+
+	if (ipconfig != NULL)
+		ifname = __connman_ipconfig_get_ifname(ipconfig);
+
+	DBG("index %d, service %p ip4config %p ifname %s",
+			network->index, service, ipconfig, ifname);
+	return ifname;
+}
 #endif
 
 int connman_network_set_nameservers(struct connman_network *network,
