@@ -916,6 +916,55 @@ dbus_bool_t g_supplicant_network_is_wps_advertizing(GSupplicantNetwork *network)
 	return FALSE;
 }
 
+#if defined TIZEN_EXT
+/*
+ * Description: Network client requires additional wifi specific info
+ */
+const unsigned char *g_supplicant_network_get_bssid(GSupplicantNetwork *network)
+{
+	if (network == NULL || network->best_bss == NULL)
+		return NULL;
+
+	return (const unsigned char *)network->best_bss->bssid;
+}
+
+unsigned int g_supplicant_network_get_maxrate(GSupplicantNetwork *network)
+{
+	if (network == NULL || network->best_bss == NULL)
+		return 0;
+
+	return network->best_bss->maxrate;
+}
+
+const char *g_supplicant_network_get_enc_mode(GSupplicantNetwork *network)
+{
+	if (network == NULL || network->best_bss == NULL)
+		return NULL;
+
+	if (network->best_bss->security == G_SUPPLICANT_SECURITY_PSK ||
+	    network->best_bss->security == G_SUPPLICANT_SECURITY_IEEE8021X) {
+		unsigned int pairwise;
+
+		pairwise = network->best_bss->rsn_pairwise |
+				network->best_bss->wpa_pairwise;
+
+		if ((pairwise & G_SUPPLICANT_PAIRWISE_CCMP) &&
+		    (pairwise & G_SUPPLICANT_PAIRWISE_TKIP))
+			return "mixed";
+		else if (pairwise & G_SUPPLICANT_PAIRWISE_CCMP)
+			return "aes";
+		else if (pairwise & G_SUPPLICANT_PAIRWISE_TKIP)
+			return "tkip";
+
+	} else if (network->best_bss->security == G_SUPPLICANT_SECURITY_WEP)
+		return "wep";
+	else if (network->best_bss->security == G_SUPPLICANT_SECURITY_NONE)
+		return "none";
+
+	return NULL;
+}
+#endif
+
 static void merge_network(GSupplicantNetwork *network)
 {
 	GString *str;
@@ -3381,6 +3430,17 @@ static void add_network_security_proto(DBusMessageIter *dict,
 	g_free(proto);
 }
 
+#if defined TIZEN_EXT
+static void add_network_security_none(DBusMessageIter *dict,
+					GSupplicantSSID *ssid)
+{
+	const char *auth_alg = "OPEN";
+
+	supplicant_dbus_dict_append_basic(dict, "auth_alg",
+					DBUS_TYPE_STRING, &auth_alg);
+}
+#endif
+
 static void add_network_security(DBusMessageIter *dict, GSupplicantSSID *ssid)
 {
 	char *key_mgmt;
@@ -3388,6 +3448,12 @@ static void add_network_security(DBusMessageIter *dict, GSupplicantSSID *ssid)
 	switch (ssid->security) {
 	case G_SUPPLICANT_SECURITY_UNKNOWN:
 	case G_SUPPLICANT_SECURITY_NONE:
+#if defined TIZEN_EXT
+		key_mgmt = "NONE";
+		add_network_security_none(dict, ssid);
+		add_network_security_ciphers(dict, ssid);
+		break;
+#endif
 	case G_SUPPLICANT_SECURITY_WEP:
 		key_mgmt = "NONE";
 		add_network_security_wep(dict, ssid);
