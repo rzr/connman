@@ -1,3 +1,6 @@
+* Thu Jul 04 2013 Anas Nashif <anas.nashif@intel.com> accepted/tizen/20130701.201407@a801119
+- Make ntp, openconnect configurable
+
 * Tue Jul 02 2013 Corentin Lecouvey <corentin.lecouvey@eurogiciel.fr> accepted/tizen/20130701.201407@745c580
 - packaging: move NTP ConnMan scripts to packaging directory
 - Add option to disable link local address" into tizen
