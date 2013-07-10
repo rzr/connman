@@ -2719,6 +2719,17 @@ static void apply_peer_services(GSupplicantPeer *peer,
 	}
 }
 
+static void add_station(const char *mac)
+{
+	connman_technology_tethering_add_station(CONNMAN_SERVICE_TYPE_WIFI,
+						 mac);
+}
+
+static void remove_station(const char *mac)
+{
+	connman_technology_tethering_remove_station(mac);
+}
+
 static void peer_found(GSupplicantPeer *peer)
 {
 	GSupplicantInterface *iface = g_supplicant_peer_get_interface(peer);
@@ -2887,6 +2898,8 @@ static const GSupplicantCallbacks callbacks = {
 	.network_added		= network_added,
 	.network_removed	= network_removed,
 	.network_changed	= network_changed,
+	.add_station		= add_station,
+	.remove_station		= remove_station,
 	.peer_found		= peer_found,
 	.peer_lost		= peer_lost,
 	.peer_changed		= peer_changed,
