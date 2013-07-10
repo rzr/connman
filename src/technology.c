@@ -1070,6 +1070,16 @@ static const GDBusMethodTable technology_methods[] = {
 static const GDBusSignalTable technology_signals[] = {
 	{ GDBUS_SIGNAL("PropertyChanged",
 			GDBUS_ARGS({ "name", "s" }, { "value", "v" })) },
+	{ GDBUS_SIGNAL("DhcpConnected",
+			GDBUS_ARGS({ "aptype", "s" },
+				{ "ipaddr", "s" },
+				{ "macaddr", "s" },
+				{ "hostname", "s" })) },
+	{ GDBUS_SIGNAL("DhcpLeaseDeleted",
+			GDBUS_ARGS({ "aptype", "s" },
+				{ "ipaddr", "s" },
+				{ "macaddr", "s" },
+				{ "hostname", "s" })) },
 	{ },
 };
 
