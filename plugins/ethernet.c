@@ -309,7 +309,7 @@ static void eth_tech_disable_tethering(struct connman_technology *technology,
 
 static int eth_tech_set_tethering(struct connman_technology *technology,
 				const char *identifier, const char *passphrase,
-				const char *bridge, bool enabled)
+				const char *bridge, bool enabled, bool hidden)
 {
 	if (!connman_technology_is_tethering_allowed(
 			CONNMAN_SERVICE_TYPE_ETHERNET))
