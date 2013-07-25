@@ -1531,6 +1531,9 @@ int __connman_technology_set_offlinemode(connman_bool_t offlinemode)
 		if (offlinemode)
 			err = technology_disable(technology);
 		else {
+			if (technology->hardblocked)
+				continue;
+
 			if (technology->enable_persistent) {
 				err = technology_enable(technology);
 				enabled_tech_count++;
