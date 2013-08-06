@@ -7,7 +7,7 @@ Release:        1
 License:        GPL-2.0
 Summary:        Connection Manager
 Url:            http://connman.net
-Group:          Connectivity/Connection Management
+Group:          Network & Connectivity/Connection Management
 Source0:        %{name}-%{version}.tar.xz
 Source10:       40-connman-ntp.list
 Source11:       connman-ntp.service
