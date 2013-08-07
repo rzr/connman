@@ -1,11 +1,5 @@
 <manifest>
-	<assign>
-		<filesystem path="/etc/dbus-1/system.d/connman.conf" label="_"/>
-		<filesystem path="/usr/lib/systemd/system/connman.service" label="_"/>
-		<filesystem path="/usr/lib/systemd/system/network.target.wants/connman.service" label="_"/>
-		<filesystem path="/usr/share/dbus-1/services/net.connman.service" label="_"/>
-	</assign>
-	<request>
-		<domain name="_"/>
-	</request>
+ <request>
+    <domain name="_"/>
+ </request>
 </manifest>
