@@ -9,7 +9,6 @@ Summary:        Connection Manager
 Url:            http://connman.net
 Group:          Network & Connectivity/Connection Management
 Source0:        %{name}-%{version}.tar.xz
-Source1:        settings
 Source10:       40-connman-ntp.list
 Source11:       connman-ntp.service
 Source1001:     connman.manifest
@@ -91,8 +90,6 @@ install -m644 %{SOURCE11} %{buildroot}%{_unitdir}
 %install_service multi-user.target.wants connman-ntp.service
 %endif
 
-mkdir -p %{buildroot}%{_localstatedir}/lib/connman
-cp %{SOURCE1} %{buildroot}%{_localstatedir}/lib/connman/settings
 mkdir -p %{buildroot}%{_sysconfdir}/connman
 cp src/main.conf %{buildroot}%{_sysconfdir}/connman/main.conf
 
@@ -119,7 +116,6 @@ systemctl daemon-reload
 %{_libdir}/connman/plugins/*.so
 %{_datadir}/man/*
 %config %{_sysconfdir}/connman/main.conf
-%attr(600,root,root) %{_localstatedir}/lib/connman/settings
 %config %{_sysconfdir}/dbus-1/system.d/*
 %{_unitdir}/connman.service
 %{_unitdir}/network.target.wants/connman.service
