@@ -23,6 +23,7 @@ BuildRequires:  openconnect
 %endif
 BuildRequires:  readline-devel
 %systemd_requires
+Requires:       iptables
 
 %description
 Connection Manager provides a daemon for managing Internet connections
