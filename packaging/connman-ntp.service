@@ -1,6 +1,7 @@
 [Unit]
 Description=Connman NTP service
-After=syslog.target
+Requires=connman.service
+After=connman.service
 
 [Service]
 Type=oneshot
