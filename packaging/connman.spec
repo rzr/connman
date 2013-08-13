@@ -43,7 +43,7 @@ Openconnect Support for Connman.
 Summary:        Test Scripts for Connection Manager
 Requires:       %{name} = %{version}
 Requires:       dbus-python
-Requires:       python-gobject
+Requires:       pygobject
 Requires:       python-xml
 
 %description test
