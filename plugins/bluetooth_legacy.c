@@ -51,6 +51,9 @@
 #define ADAPTER_REMOVED			"AdapterRemoved"
 #define DEVICE_REMOVED			"DeviceRemoved"
 
+#define PEER_CONNECTED                 "PeerConnected"
+#define PEER_DISCONNECTED              "PeerDisconnected"
+
 #define PROPERTY_CHANGED		"PropertyChanged"
 #define GET_PROPERTIES			"GetProperties"
 #define SET_PROPERTY			"SetProperty"
@@ -330,6 +333,53 @@ static gboolean network_changed(DBusConnection *conn,
 		connman_network_set_associating(network, false);
 		connman_network_set_connected(network, false);
 	}
+
+	return TRUE;
+}
+
+static void parse_peer_device(DBusMessage *message, char **dev,
+				char **address)
+{
+	const char *path = dbus_message_get_path(message);
+	DBusMessageIter iter;
+
+	DBG("path %s", path);
+
+	if (dbus_message_iter_init(message, &iter) == FALSE)
+		return;
+
+	dbus_message_iter_get_basic(&iter, dev);
+	dbus_message_iter_next(&iter);
+	dbus_message_iter_get_basic(&iter, address);
+}
+
+static gboolean peer_connected(DBusConnection *connection,
+				DBusMessage *message, void *user_data)
+{
+	char *dev, *address;
+
+	parse_peer_device(message, &dev, &address);
+
+	DBG("connection device is %s", dev);
+	DBG("connection address is %s", address);
+
+	connman_technology_tethering_add_station(
+			CONNMAN_SERVICE_TYPE_BLUETOOTH, address);
+
+	return TRUE;
+}
+
+static gboolean peer_disconnected(DBusConnection *connection,
+				DBusMessage *message, void *user_data)
+{
+	char *dev, *address;
+
+	parse_peer_device(message, &dev, &address);
+
+	DBG("disconnection device is %s", dev);
+	DBG("disconnection address is %s", address);
+
+	connman_technology_tethering_remove_station(address);
 
 	return TRUE;
 }
@@ -1266,6 +1316,8 @@ static guint adapter_watch;
 static guint device_watch;
 static guint device_removed_watch;
 static guint network_watch;
+static guint peerconnected_watch;
+static guint peerdisconnected_watch;
 
 static int bluetooth_init(void)
 {
@@ -1309,10 +1361,23 @@ static int bluetooth_init(void)
 						PROPERTY_CHANGED, network_changed,
 						NULL, NULL);
 
+	peerconnected_watch = g_dbus_add_signal_watch(connection,
+						BLUEZ_SERVICE,
+						NULL, BLUEZ_NETWORK_SERVER,
+						PEER_CONNECTED, peer_connected,
+						NULL, NULL);
+
+	peerdisconnected_watch = g_dbus_add_signal_watch(connection,
+						BLUEZ_SERVICE,
+						NULL, BLUEZ_NETWORK_SERVER,
+						PEER_DISCONNECTED,
+						peer_disconnected,
+						NULL, NULL);
+
 	if (watch == 0 || added_watch == 0 || removed_watch == 0
-			|| adapter_watch == 0 || network_watch == 0
-				|| device_watch == 0
-					|| device_removed_watch == 0) {
+		|| adapter_watch == 0 || network_watch == 0 || device_watch == 0
+		|| peerconnected_watch == 0 || peerdisconnected_watch == 0
+		|| device_removed_watch == 0) {
 		err = -EIO;
 		goto remove;
 	}
@@ -1344,6 +1409,8 @@ remove:
 	g_dbus_remove_watch(connection, device_removed_watch);
 	g_dbus_remove_watch(connection, device_watch);
 	g_dbus_remove_watch(connection, network_watch);
+	g_dbus_remove_watch(connection, peerconnected_watch);
+	g_dbus_remove_watch(connection, peerdisconnected_watch);
 
 	dbus_connection_unref(connection);
 
@@ -1359,6 +1426,8 @@ static void bluetooth_exit(void)
 	g_dbus_remove_watch(connection, device_removed_watch);
 	g_dbus_remove_watch(connection, device_watch);
 	g_dbus_remove_watch(connection, network_watch);
+	g_dbus_remove_watch(connection, peerconnected_watch);
+	g_dbus_remove_watch(connection, peerdisconnected_watch);
 
 	/*
 	 * We unset the disabling of the Bluetooth device when shutting down
