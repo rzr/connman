@@ -226,14 +226,57 @@ static struct connman_device_driver ethernet_driver = {
 	.disable	= ethernet_disable,
 };
 
+static void gadget_newlink(unsigned flags, unsigned change, void *user_data)
+{
+	struct connman_device *device = user_data;
+	struct ethernet_data *ethernet = connman_device_get_data(device);
+
+	DBG("index %d flags %d change %d", ethernet->index, flags, change);
+
+	if ((ethernet->flags & IFF_UP) != (flags & IFF_UP)) {
+		if (flags & IFF_UP) {
+			DBG("power on");
+			connman_device_set_powered(device, TRUE);
+		} else {
+			DBG("power off");
+			connman_device_set_powered(device, FALSE);
+		}
+	}
+
+	ethernet->flags = flags;
+}
+
 static int gadget_probe(struct connman_device *device)
 {
+	struct ethernet_data *ethernet;
+
 	DBG("device %p", device);
+
+	ethernet = g_try_new0(struct ethernet_data, 1);
+	if (ethernet == NULL)
+		return -ENOMEM;
+
+	connman_device_set_data(device, ethernet);
+
+	ethernet->index = connman_device_get_index(device);
+	ethernet->flags = 0;
+
+	ethernet->watch = connman_rtnl_add_newlink_watch(ethernet->index,
+						gadget_newlink, device);
+
 	return 0;
 }
 static void gadget_remove(struct connman_device *device)
 {
+	struct ethernet_data *ethernet = connman_device_get_data(device);
+
 	DBG("device %p", device);
+
+	connman_device_set_data(device, NULL);
+
+	connman_rtnl_remove_watch(ethernet->watch);
+
+	g_free(ethernet);
 }
 static int gadget_enable(struct connman_device *device)
 {
