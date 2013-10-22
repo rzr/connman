@@ -163,6 +163,9 @@ int __connman_rfkill_block(enum connman_service_type type, bool block)
 
 	DBG("type %d block %d", type, block);
 
+#if defined DISABLE_RFKILL
+	DBG("rfkill is disabled by default");
+#else
 	rfkill_type = convert_service_type(type);
 	if (rfkill_type == NUM_RFKILL_TYPES)
 		return -EINVAL;
@@ -184,6 +187,7 @@ int __connman_rfkill_block(enum connman_service_type type, bool block)
 		err = 0;
 
 	close(fd);
+#endif
 
 	return err;
 }
