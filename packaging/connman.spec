@@ -77,6 +77,7 @@ CFLAGS+=" -DTIZEN_EXT"
             --enable-loopback \
             --enable-ethernet \
             --disable-linklocaladdr \
+            --disable-rfkill \
             --with-systemdunitdir=%{_unitdir}
 
 make %{?_smp_mflags}
