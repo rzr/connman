@@ -376,6 +376,13 @@ AC_ARG_ENABLE(linklocaladdr, AC_HELP_STRING([--disable-linklocaladdr],
 	fi
 ])
 
+AC_ARG_ENABLE(rfkill, AC_HELP_STRING([--disable-rfkill],
+			[disable device rfkill operation]), [
+	if (test "${enableval}" = "no"); then
+		CFLAGS="$CFLAGS -DDISABLE_RFKILL"
+	fi
+])
+
 AC_ARG_ENABLE(datafiles, AC_HELP_STRING([--disable-datafiles],
 			[don't install configuration and data files]),
 					[enable_datafiles=${enableval}])
