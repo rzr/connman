@@ -182,7 +182,6 @@ static int wifi_probe(struct connman_device *device)
 	wifi->bridged = false;
 	wifi->bridge = NULL;
 	wifi->scan_params = NULL;
-
 	wifi->state = G_SUPPLICANT_STATE_INACTIVE;
 
 	connman_device_set_data(device, wifi);
