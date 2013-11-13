@@ -87,8 +87,6 @@ make %{?_smp_mflags}
 mkdir -p %{buildroot}/usr/lib/systemd/ntp-units.d
 install -m644 %{SOURCE10} %{buildroot}/usr/lib/systemd/ntp-units.d
 install -m644 %{SOURCE11} %{buildroot}%{_unitdir}
-%install_service network.target.wants connman-ntp.service
-%install_service multi-user.target.wants connman-ntp.service
 %endif
 
 mkdir -p %{buildroot}%{_sysconfdir}/connman
@@ -124,8 +122,6 @@ systemctl daemon-reload
 %if %{with connman_ntp}
 %dir /usr/lib/systemd/ntp-units.d
 %{_unitdir}/connman-ntp.service
-%{_unitdir}/multi-user.target.wants/connman-ntp.service
-%{_unitdir}/network.target.wants/connman-ntp.service
 /usr/lib/systemd/ntp-units.d/40-connman-ntp.list
 %endif
 
