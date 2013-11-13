@@ -1,7 +1,6 @@
 [Unit]
 Description=Connman NTP service
 Requires=connman.service
-After=connman.service
 
 [Service]
 Type=oneshot
@@ -9,5 +8,3 @@ ExecStart=/bin/bash -c "dbus-send --system --type=method_call --print-reply --de
 ExecStop=/bin/bash -c "dbus-send --system --type=method_call --print-reply --dest=net.connman / net.connman.Clock.SetProperty string:'TimeUpdates' variant:string:'manual'"
 RemainAfterExit=yes
 
-[Install]
-WantedBy=multi-user.target
