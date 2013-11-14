@@ -1,3 +1,7 @@
+* Thu Nov 14 2013 Corentin Lecouvey <corentin.lecouvey@eurogiciel.fr> accepted/trunk/20131113.103007@3bf2edb
+- prevent from starting connman-ntp.service at boot time
+  Bug-Tizen: TZPC-1974/part1of2 (internet time not working)
+
 * Tue Nov 12 2013 Michael Ikey Doherty <michael.i.doherty@intel.com> submit/trunk/20130930.202643@897f99e
 - wifi: Ensure that scan_params is initialized (TZPC-2589)
 - Reset wifi device retry count on failure (TZPC-4443)
