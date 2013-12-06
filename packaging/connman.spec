@@ -19,6 +19,7 @@ BuildRequires:  pkgconfig(glib-2.0)
 BuildRequires:  pkgconfig(libiptc)
 BuildRequires:  pkgconfig(xtables)
 BuildRequires:  pkgconfig(gnutls)
+BuildRequires:  wpa_supplicant
 %if %{with connman_openconnect}
 BuildRequires:  openconnect
 %endif
