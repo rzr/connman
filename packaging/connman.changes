@@ -1,3 +1,9 @@
+* Wed Dec 11 2013 Philippe Coval <philippe.coval@open.eurogiciel.org> accepted/trunk/20131121.020310@a7ea30c
+- gsupplicant: rely on wpa_supplicant retry mechanism
+  Bug: https://01.org/jira/browse/CM-655
+  Origin: https://01.org/jira/secure/attachment/11906/0001-gsupplicant-rely-on-wpa_supplicant-retry-mechanism.patch
+  Bug-Tizen: TZPC-4602
+
 * Thu Nov 14 2013 Corentin Lecouvey <corentin.lecouvey@eurogiciel.fr> accepted/trunk/20131113.103007@3bf2edb
 - prevent from starting connman-ntp.service at boot time
   Bug-Tizen: TZPC-1974/part1of2 (internet time not working)
