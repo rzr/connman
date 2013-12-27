@@ -323,6 +323,7 @@ static int __network_connect(struct connman_network *network)
 {
 	struct connman_device *device;
 	struct telephony_modem *modem;
+	struct telephony_service *service;
 
 	DBG("network %p", network);
 
@@ -334,7 +335,14 @@ static int __network_connect(struct connman_network *network)
 	if (modem == NULL)
 		return -ENODEV;
 
+	service = modem->s_service;
+	if (service == NULL)
+		return -ENOLINK;
+
 	if (modem->powered == FALSE)
+		return -ENOLINK;
+
+	if (modem->data_allowed == FALSE || service->ps_attached == FALSE)
 		return -ENOLINK;
 
 	return __request_network_activate(network);
