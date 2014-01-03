@@ -2,7 +2,7 @@
 %bcond_with     connman_ntp
 
 Name:           connman
-Version:        1.20
+Version:        1.20+6+g557f99d
 Release:        0
 License:        GPL-2.0
 Summary:        Connection Manager
