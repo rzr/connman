@@ -543,7 +543,7 @@ static void device_disable_cb(const DBusError *error, void *user_data)
 	while (g_hash_table_iter_next(&iter, &key, &value) == TRUE) {
 		struct bluetooth_pan *pan = value;
 
-		if (connman_network_get_device(pan->network) == device) {
+		if (pan->network && connman_network_get_device(pan->network) == device) {
 			DBG("disable network %p", pan->network);
 			connman_device_remove_network(device, pan->network);
 		}
