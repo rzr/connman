@@ -5,10 +5,11 @@ After=dbus.socket
 Before=remote-fs.target
 
 [Service]
+EnvironmentFile=-/etc/sysconfig/connman
 Type=dbus
 BusName=net.connman
 Restart=on-failure
-ExecStart=@prefix@/sbin/connmand -n
+ExecStart=@prefix@/sbin/connmand -n $OPTIONS
 StandardOutput=null
 
 [Install]
