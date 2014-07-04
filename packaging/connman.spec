@@ -6,6 +6,7 @@ Summary:        Connection Manager
 Url:            http://connman.net
 Group:          Network & Connectivity/Connection Management
 Source0:        %{name}-%{version}.tar.gz
+Source1001:     connman.manifest
 BuildRequires: 	systemd
 BuildRequires:  pkgconfig(dbus-1)
 BuildRequires:  pkgconfig(glib-2.0)
@@ -39,6 +40,7 @@ Header files and development files for connman.
 
 %prep
 %setup -q
+cp %{SOURCE1001} .
 
 %build
 CFLAGS+=" -DTIZEN_EXT"
@@ -79,6 +81,7 @@ systemctl daemon-reload
 %docs_package
 
 %files
+%manifest %{name}.manifest
 %license COPYING
 %{_sbindir}/*
 %config %{_sysconfdir}/connman/main.conf
@@ -88,9 +91,11 @@ systemctl daemon-reload
 %{_unitdir}/multi-user.target.wants/connman.service
 
 %files test
+%manifest %{name}.manifest
 %{_libdir}/%{name}/test/*
 
 %files devel
+%manifest %{name}.manifest
 %{_includedir}/connman/*.h
 %{_libdir}/pkgconfig/*.pc
 
