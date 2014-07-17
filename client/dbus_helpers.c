@@ -43,7 +43,7 @@ void __connmanctl_dbus_print(DBusMessageIter *iter, const char *pre,
 	char *str;
 	DBusMessageIter entry;
 
-	if (pre == NULL)
+	if (!pre)
 		pre = "";
 
 	while ((arg_type = dbus_message_iter_get_arg_type(iter))
@@ -87,7 +87,7 @@ void __connmanctl_dbus_print(DBusMessageIter *iter, const char *pre,
 
 		case DBUS_TYPE_BOOLEAN:
 			dbus_message_iter_get_basic(iter, &b);
-			if (b == FALSE)
+			if (!b)
 				fprintf(stdout, "False");
 			else
 				fprintf(stdout, "True");
@@ -123,7 +123,7 @@ void __connmanctl_dbus_print(DBusMessageIter *iter, const char *pre,
 			break;
 		}
 
-		if (dbus_message_iter_has_next(iter) == TRUE)
+		if (dbus_message_iter_has_next(iter))
 			fprintf(stdout, "%s", sep);
 
 		dbus_message_iter_next(iter);
@@ -177,14 +177,13 @@ static int send_method_call(DBusConnection *connection,
 	DBusPendingCall *call;
 	struct dbus_callback *callback;
 
-	if (dbus_connection_send_with_reply(connection, message, &call,
-					TIMEOUT) == FALSE)
+	if (!dbus_connection_send_with_reply(connection, message, &call, TIMEOUT))
 		goto end;
 
-        if (call == NULL)
-                goto end;
+	if (!call)
+		goto end;
 
-	if (cb != NULL) {
+	if (cb) {
 		callback = g_new0(struct dbus_callback, 1);
 		callback->cb = cb;
 		callback->user_data = user_data;
@@ -230,20 +229,22 @@ static int append_variant(DBusMessageIter *iter, const char *property,
 int __connmanctl_dbus_method_call(DBusConnection *connection,
 		const char *service, const char *path, const char *interface,
 		const char *method, connmanctl_dbus_method_return_func_t cb,
-		void *user_data, int arg1, ...)
+		void *user_data, connmanctl_dbus_append_func_t append_func,
+		void *append_data)
 {
 	DBusMessage *message;
-	va_list args;
+	DBusMessageIter iter;
 
 	message = dbus_message_new_method_call(service, path, interface,
 			method);
 
-	if (message == NULL)
+	if (!message)
 		return -ENOMEM;
 
-	va_start(args, arg1);
-	dbus_message_append_args_valist(message, arg1, args);
-	va_end(args);
+	if (append_func) {
+		dbus_message_iter_init_append(message, &iter);
+		append_func(&iter, append_data);
+	}
 
 	return send_method_call(connection, message, cb, user_data);
 }
@@ -259,7 +260,7 @@ int __connmanctl_dbus_set_property(DBusConnection *connection,
 	message = dbus_message_new_method_call("net.connman", path,
 			interface, "SetProperty");
 
-	if (message == NULL)
+	if (!message)
 		return -ENOMEM;
 
 	dbus_message_iter_init_append(message, &iter);
@@ -270,6 +271,22 @@ int __connmanctl_dbus_set_property(DBusConnection *connection,
 	}
 
 	return send_method_call(connection, message, cb, user_data);
+}
+
+void __connmanctl_dbus_append_dict(DBusMessageIter *iter,
+		connmanctl_dbus_append_func_t append_fn, void *append_data)
+{
+	DBusMessageIter dict;
+
+	dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY,
+                        DBUS_DICT_ENTRY_BEGIN_CHAR_AS_STRING
+                        DBUS_TYPE_STRING_AS_STRING DBUS_TYPE_VARIANT_AS_STRING
+                        DBUS_DICT_ENTRY_END_CHAR_AS_STRING, &dict);
+
+	if (append_fn)
+		append_fn(&dict, append_data);
+
+	dbus_message_iter_close_container(iter, &dict);
 }
 
 void __connmanctl_dbus_append_dict_entry(DBusMessageIter *iter,
@@ -298,7 +315,7 @@ int __connmanctl_dbus_set_property_dict(DBusConnection *connection,
 	message = dbus_message_new_method_call("net.connman", path,
 			interface, "SetProperty");
 
-	if (message == NULL)
+	if (!message)
 		return -ENOMEM;
 
 	dbus_message_iter_init_append(message, &iter);
@@ -378,7 +395,54 @@ int __connmanctl_dbus_set_property_array(DBusConnection *connection,
 	message = dbus_message_new_method_call("net.connman", path,
 			interface, "SetProperty");
 
-	if (message == NULL)
+	if (!message)
+		return -ENOMEM;
+
+	dbus_message_iter_init_append(message, &iter);
+
+	append_variant_array(&iter, property, append_fn, append_user_data);
+
+	return send_method_call(connection, message, cb, user_data);
+}
+
+int __connmanctl_dbus_session_change(DBusConnection *connection,
+		const char *session_path,
+		connmanctl_dbus_method_return_func_t cb, void * user_data,
+		const char *property, int type, void *value)
+{
+	DBusMessage *message;
+	DBusMessageIter iter;
+
+	message = dbus_message_new_method_call("net.connman", session_path,
+			"net.connman.Session", "Change");
+
+	if (!message)
+		return -ENOMEM;
+
+	dbus_message_iter_init_append(message, &iter);
+
+	if (append_variant(&iter, property, type, value) < 0) {
+		dbus_message_unref(message);
+		return -EINVAL;
+	}
+
+	return send_method_call(connection, message, cb, user_data);
+}
+
+int __connmanctl_dbus_session_change_array(DBusConnection *connection,
+		const char *session_path,
+		connmanctl_dbus_method_return_func_t cb, void *user_data,
+		const char *property,
+		connmanctl_dbus_append_func_t append_fn,
+		void *append_user_data)
+{
+	DBusMessage *message;
+	DBusMessageIter iter;
+
+	message = dbus_message_new_method_call("net.connman", session_path,
+			"net.connman.Session", "Change");
+
+	if (!message)
 		return -ENOMEM;
 
 	dbus_message_iter_init_append(message, &iter);

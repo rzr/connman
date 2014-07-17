@@ -2,7 +2,7 @@
  *
  *  Connection Manager
  *
- *  Copyright (C) 2012-2013  Intel Corporation. All rights reserved.
+ *  Copyright (C) 2012-2014  Intel Corporation. All rights reserved.
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -45,7 +45,7 @@ static int saved_point;
 
 void __connmanctl_quit(void)
 {
-	if (main_loop != NULL)
+	if (main_loop)
 		g_main_loop_quit(main_loop);
 }
 
@@ -85,7 +85,7 @@ static void rl_handler(char *input)
 	char **args, **trim_args;
 	int num, len, err, i;
 
-	if (input == NULL) {
+	if (!input) {
 		rl_newline(1, '\n');
 		g_main_loop_quit(main_loop);
 		return;
@@ -135,17 +135,51 @@ static char **complete_agent(const char *text, int start, int end)
 	return NULL;
 }
 
+/* Return how many parameters we have typed */
+int __connmanctl_input_calc_level(void)
+{
+	int count = 0;
+	char *ptr;
+
+	ptr = rl_line_buffer;
+
+	while (*ptr) {
+		if (*ptr == ' ') {
+			if (*(ptr + 1) == ' ') {
+				ptr++;
+				continue;
+			} else
+				count++;
+		}
+		ptr++;
+	}
+
+	return count;
+}
+
+void __connmanctl_input_lookup_end(void)
+{
+	rl_attempted_completion_over = 1;
+}
+
 static char **complete_command(const char *text, int start, int end)
 {
-	char **command = NULL;
-
-	rl_attempted_completion_over = 1;
-
-	if (start == 0)
-		command = rl_completion_matches(text,
+	if (start == 0) {
+		return rl_completion_matches(text,
 				__connmanctl_lookup_command);
 
-	return command;
+	} else {
+		__connmanctl_lookup_cb cb;
+		char **str = NULL;
+
+		cb = __connmanctl_get_lookup_func(rl_line_buffer);
+		if (cb)
+			str = rl_completion_matches(text, cb);
+		else
+			rl_attempted_completion_over = 1;
+
+		return str;
+	}
 }
 
 static struct {
@@ -164,7 +198,7 @@ void __connmanctl_agent_mode(const char *prompt,
 	agent_handler.cb = input_handler;
 	agent_handler.user_data = user_data;
 
-	if (input_handler != NULL)
+	if (input_handler)
 		rl_callback_handler_install(prompt, rl_agent_handler);
 	else {
 		rl_set_prompt(prompt);
@@ -200,17 +234,20 @@ int __connmanctl_input_init(int argc, char *argv[])
 		return 1;
 	}
 
-	channel = g_io_channel_unix_new(fileno(stdin));
-	source = g_io_add_watch(channel, G_IO_IN|G_IO_ERR|G_IO_HUP|G_IO_NVAL,
-			input_handler, NULL);
-	g_io_channel_unref(channel);
-
 	if (argc < 2) {
 		interactive = true;
 
-		__connmanctl_command_mode();
-		err = -EINPROGRESS;
+		channel = g_io_channel_unix_new(fileno(stdin));
+		source = g_io_add_watch(channel,
+				G_IO_IN|G_IO_ERR|G_IO_HUP|G_IO_NVAL,
+				input_handler, NULL);
+		g_io_channel_unref(channel);
 
+		__connmanctl_monitor_completions(connection);
+
+		__connmanctl_command_mode();
+
+		err = -EINPROGRESS;
 	} else {
 		interactive = false;
 
@@ -219,7 +256,7 @@ int __connmanctl_input_init(int argc, char *argv[])
 			err = __connmanctl_commands(connection, help, 1);
 		else
 			err = __connmanctl_commands(connection, argv + 1,
-					argc -1);
+					argc - 1);
 	}
 
 	if (err == -EINPROGRESS) {
@@ -229,15 +266,16 @@ int __connmanctl_input_init(int argc, char *argv[])
 		err = 0;
 	}
 
-	g_source_remove(source);
+	if (interactive) {
+		g_source_remove(source);
+		__connmanctl_monitor_completions(NULL);
 
-	if (interactive == true) {
 		rl_callback_handler_remove();
 		rl_message("");
 	}
 
 	dbus_connection_unref(connection);
-	if (main_loop != NULL)
+	if (main_loop)
 		g_main_loop_unref(main_loop);
 
 	if (err < 0)

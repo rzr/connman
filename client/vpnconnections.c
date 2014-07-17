@@ -53,7 +53,7 @@ static void print_connection(char *path, DBusMessageIter *iter)
 			dbus_message_iter_recurse(&entry, &val);
 			dbus_message_iter_get_basic(&val, &str);
 
-			if (str != NULL) {
+			if (str) {
 				if (strcmp(str, "ready") == 0)
 					state = 'R';
 				else if (strcmp(str, "configuration") == 0)
@@ -67,7 +67,7 @@ static void print_connection(char *path, DBusMessageIter *iter)
 	}
 
 	str = strrchr(path, '/');
-	if (str != NULL)
+	if (str)
 		str++;
 	else
 		str = path;
@@ -101,7 +101,7 @@ void __connmanctl_vpnconnections_list(DBusMessageIter *iter)
 			print_connection(path, &dict);
 		}
 
-		if (dbus_message_iter_has_next(&array) == TRUE)
+		if (dbus_message_iter_has_next(&array))
 			fprintf(stdout, "\n");
 
 		dbus_message_iter_next(&array);
