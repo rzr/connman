@@ -577,6 +577,7 @@ int __connman_dhcp_start(struct connman_network *network, dhcp_cb callback)
 	struct connman_ipconfig *ipconfig;
 	const char *last_addr = NULL;
 	struct connman_dhcp *dhcp;
+	int err;
 
 	DBG("");
 
@@ -598,9 +599,14 @@ int __connman_dhcp_start(struct connman_network *network, dhcp_cb callback)
 		dhcp->network = network;
 		connman_network_ref(network);
 
-		g_hash_table_insert(network_table, network, dhcp);
+		err = dhcp_initialize(dhcp);
+		if (err < 0) {
+			connman_network_unref(network);
+			g_free(dhcp);
+			return err;
+		}
 
-		dhcp_initialize(dhcp);
+		g_hash_table_insert(network_table, network, dhcp);
 	}
 
 	dhcp->callback = callback;
