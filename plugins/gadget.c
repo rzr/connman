@@ -364,7 +364,7 @@ static void gadget_tech_disable_tethering(struct connman_technology *technology,
 
 static int gadget_tech_set_tethering(struct connman_technology *technology,
 				const char *identifier, const char *passphrase,
-				const char *bridge, bool enabled)
+				const char *bridge, bool enabled, bool hidden)
 {
 	DBG("bridge %s enabled %d", bridge, enabled);
 
