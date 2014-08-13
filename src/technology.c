@@ -948,7 +948,7 @@ static DBusMessage *set_property(DBusConnection *conn,
 			}
 		}
 	} else if (g_str_equal(name, "Hidden")) {
-		bool hidden;
+		dbus_bool_t hidden;
 
 		if (type != DBUS_TYPE_BOOLEAN)
 			return __connman_error_invalid_arguments(msg);
@@ -965,7 +965,7 @@ static DBusMessage *set_property(DBusConnection *conn,
 					CONNMAN_TECHNOLOGY_INTERFACE,
 					"Hidden",
 					DBUS_TYPE_BOOLEAN,
-					&technology->tethering_hidden);
+					&hidden);
 	} else if (g_str_equal(name, "Powered")) {
 		dbus_bool_t enable;
 
