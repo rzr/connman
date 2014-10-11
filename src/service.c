@@ -30,6 +30,8 @@
 #include <gdbus.h>
 #include <ctype.h>
 #include <stdint.h>
+#include <pwd.h>
+#include <utmpx.h>
 
 #include <connman/storage.h>
 #include <connman/setting.h>
@@ -377,6 +379,61 @@ connman_service_is_user_allowed(struct connman_service *service, uid_t uid)
 	}
 
 	return true;
+}
+
+static GList *connman_service_get_login_users()
+{
+	struct utmpx *utmp;
+	struct passwd *pwd;
+	GList *user_list = NULL;
+
+	setutxent();
+
+	while ((utmp = getutxent()) != NULL) {
+		if (utmp->ut_user != USER_ROOT && utmp->ut_type != USER_PROCESS)
+			continue;
+
+		pwd = getpwnam(utmp->ut_user);
+
+		if (!g_list_find(user_list, GUINT_TO_POINTER(pwd->pw_uid)))
+			user_list = g_list_append(user_list,
+						GUINT_TO_POINTER(pwd->pw_uid));
+
+		DBG("User Name: %s, UID: %d", utmp->ut_user, pwd->pw_uid);
+	}
+
+	endutxent();
+
+	return user_list;
+}
+
+static bool is_service_owner_user_login(struct connman_service *service)
+{
+	GList *list, *user_list;
+	bool ret = false;
+
+	/* Here we only care about wifi service */
+	if (service->type != CONNMAN_SERVICE_TYPE_WIFI)
+		return true;
+
+	user_list = connman_service_get_login_users();
+
+	DBG("service favorite user id is: %d", service->user.favorite_user);
+
+	for (list = user_list; list; list = list->next) {
+		uid_t uid = GPOINTER_TO_UINT(list->data);
+
+		DBG("login user id is %d", uid);
+
+		if (service->user.favorite_user == uid) {
+			ret = true;
+			break;
+		}
+	}
+
+	g_list_free(user_list);
+
+	return ret;
 }
 
 int __connman_service_load_modifiable(struct connman_service *service)
@@ -3797,6 +3854,11 @@ static bool auto_connect_service(GList *services,
 		if (autoconnecting && !active_sessions[service->type]) {
 			DBG("service %p type %s has no users", service,
 				__connman_service_type2string(service->type));
+			continue;
+		}
+
+		if (!is_service_owner_user_login(service)) {
+			DBG("favorite user not login, wifi auto connect denied");
 			continue;
 		}
 
