@@ -524,6 +524,31 @@ err:
 	return err;
 }
 
+int connman_dbus_get_connection_unix_user_sync(DBusConnection *connection,
+						const char *bus_name,
+						unsigned int *user_id)
+{
+	unsigned long uid;
+	DBusError err;
+
+	dbus_error_init(&err);
+
+	uid = dbus_bus_get_unix_user(connection, bus_name, &err);
+
+	if (uid == (unsigned long)-1) {
+		DBG("Can not get unix user ID!");
+		if (dbus_error_is_set(&err)) {
+			DBG("%s", err.message);
+			dbus_error_free(&err);
+		}
+		return -1;
+	}
+
+	*user_id = (unsigned int)uid;
+
+	return 0;
+}
+
 static unsigned char *parse_context(DBusMessage *msg)
 {
 	DBusMessageIter iter, array;

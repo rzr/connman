@@ -180,6 +180,10 @@ int connman_dbus_get_connection_unix_user(DBusConnection *connection,
                                connman_dbus_get_connection_unix_user_cb_t func,
                                void *user_data);
 
+int connman_dbus_get_connection_unix_user_sync(DBusConnection *connection,
+				const char *bus_name,
+				unsigned int *user_id);
+
 typedef void (* connman_dbus_get_context_cb_t) (const unsigned char *context,
 						void *user_data, int err);
 
