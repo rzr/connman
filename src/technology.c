@@ -862,6 +862,21 @@ static DBusMessage *set_property(DBusConnection *conn,
 
 	DBG("property %s", name);
 
+	if (technology->type == CONNMAN_SERVICE_TYPE_WIFI && technology->connected) {
+		uid_t uid;
+		if (connman_dbus_get_connection_unix_user_sync(conn,
+						dbus_message_get_sender(msg),
+						&uid) < 0) {
+			DBG("Can not get unix user id!");
+			return __connman_error_permission_denied(msg);
+		}
+
+		if (!__connman_service_is_user_allowed(CONNMAN_SERVICE_TYPE_WIFI, uid)) {
+			DBG("Not allow this user to operate wifi technology now!");
+			return __connman_error_permission_denied(msg);
+		}
+	}
+
 	if (g_str_equal(name, "Tethering")) {
 		dbus_bool_t tethering;
 		int err;
