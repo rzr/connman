@@ -791,6 +791,9 @@ void __connman_service_notify(struct connman_service *service,
 			unsigned int rx_error, unsigned int tx_error,
 			unsigned int rx_dropped, unsigned int tx_dropped);
 
+bool __connman_service_is_user_allowed(enum connman_service_type type,
+					uid_t uid);
+
 int __connman_service_counter_register(const char *counter);
 void __connman_service_counter_unregister(const char *counter);
 

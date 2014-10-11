@@ -39,6 +39,9 @@
 
 #define CONNECT_TIMEOUT		120
 
+#define USER_ROOT		0
+#define USER_NONE		(uid_t)-1
+
 #if defined TIZEN_EXT
 #define WIFI_BSSID_STR_LEN	18
 #endif
@@ -67,6 +70,11 @@ struct connman_stats_counter {
 	struct connman_stats stats_roaming;
 };
 
+struct connman_service_user {
+	uid_t favorite_user;
+	uid_t current_user;
+};
+
 struct connman_service {
 	int refcount;
 	char *identifier;
@@ -89,6 +97,8 @@ struct connman_service {
 	char *name;
 	char *passphrase;
 	bool roaming;
+	bool request_passphrase_input;
+	struct connman_service_user user;
 	struct connman_ipconfig *ipconfig_ipv4;
 	struct connman_ipconfig *ipconfig_ipv6;
 	struct connman_network *network;
@@ -351,6 +361,24 @@ static enum connman_service_proxy_method string2proxymethod(const char *method)
 		return CONNMAN_SERVICE_PROXY_METHOD_UNKNOWN;
 }
 
+static bool
+connman_service_is_user_allowed(struct connman_service *service, uid_t uid)
+{
+	uid_t favorite_user = service->user.favorite_user;
+	uid_t current_user = uid;
+
+	DBG("Service favorite UID: %d, current UID: %d", favorite_user, current_user);
+	if (favorite_user == USER_NONE || current_user == USER_ROOT)
+		return true;
+
+	if (favorite_user != current_user || current_user == USER_NONE) {
+		DBG("Current user is not a favorite user to this service!");
+		return false;
+	}
+
+	return true;
+}
+
 int __connman_service_load_modifiable(struct connman_service *service)
 {
 	GKeyFile *keyfile;
@@ -574,6 +602,8 @@ static int service_load(struct connman_service *service)
 	service->hidden_service = g_key_file_get_boolean(keyfile,
 					service->identifier, "Hidden", NULL);
 
+	service->user.favorite_user = g_key_file_get_integer(keyfile,
+					service->identifier, "UID", NULL);
 done:
 	g_key_file_free(keyfile);
 
@@ -618,6 +648,9 @@ static int service_save(struct connman_service *service)
 		if (service->network) {
 			const unsigned char *ssid;
 			unsigned int ssid_len = 0;
+
+			g_key_file_set_integer(keyfile, service->identifier,
+				"UID", service->user.favorite_user);
 
 			ssid = connman_network_get_blob(service->network,
 							"WiFi.SSID", &ssid_len);
@@ -3236,6 +3269,21 @@ static DBusMessage *set_property(DBusConnection *conn,
 	if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_STRING)
 		return __connman_error_invalid_arguments(msg);
 
+	if (service->type == CONNMAN_SERVICE_TYPE_WIFI && is_connected(service)) {
+		uid_t uid;
+		if (connman_dbus_get_connection_unix_user_sync(conn,
+						dbus_message_get_sender(msg),
+						&uid) < 0) {
+			DBG("Can not get unix user id!");
+			return __connman_error_permission_denied(msg);
+		}
+
+		if (!connman_service_is_user_allowed(service, uid)) {
+			DBG("Not allow this user to operate this wifi service now!");
+			return __connman_error_permission_denied(msg);
+		}
+	}
+
 	dbus_message_iter_get_basic(&iter, &name);
 	dbus_message_iter_next(&iter);
 
@@ -3997,6 +4045,26 @@ static DBusMessage *connect_service(DBusConnection *conn,
 	if (service->pending)
 		return __connman_error_in_progress(msg);
 
+	if (service->type == CONNMAN_SERVICE_TYPE_WIFI) {
+		uid_t uid;
+		if (connman_dbus_get_connection_unix_user_sync(conn,
+						dbus_message_get_sender(msg),
+						&uid) < 0) {
+			DBG("Can not get unix user id!");
+			return __connman_error_permission_denied(msg);
+		}
+
+		if (!__connman_service_is_user_allowed(CONNMAN_SERVICE_TYPE_WIFI, uid)) {
+			DBG("Not allow this user to connect this wifi service now!");
+			return __connman_error_permission_denied(msg);
+		}
+
+		if (uid != USER_ROOT && uid != service->user.favorite_user)
+			service->request_passphrase_input = true;
+
+		service->user.current_user = uid;
+	}
+
 	index = __connman_service_get_index(service);
 
 	for (list = service_list; list; list = list->next) {
@@ -4047,6 +4115,21 @@ static DBusMessage *disconnect_service(DBusConnection *conn,
 	int err;
 
 	DBG("service %p", service);
+
+	if (service->type == CONNMAN_SERVICE_TYPE_WIFI) {
+		uid_t uid;
+		if (connman_dbus_get_connection_unix_user_sync(conn,
+						dbus_message_get_sender(msg),
+						&uid) < 0) {
+			DBG("Can not get unix user id!");
+			return __connman_error_permission_denied(msg);
+		}
+
+		if (!connman_service_is_user_allowed(service, uid)) {
+			DBG("Not allow this user to disconnect this wifi service now!");
+			return __connman_error_permission_denied(msg);
+		}
+	}
 
 	service->ignore = true;
 
@@ -4102,6 +4185,21 @@ static DBusMessage *remove_service(DBusConnection *conn,
 	struct connman_service *service = user_data;
 
 	DBG("service %p", service);
+
+	if (service->type == CONNMAN_SERVICE_TYPE_WIFI) {
+		uid_t uid;
+		if (connman_dbus_get_connection_unix_user_sync(conn,
+						dbus_message_get_sender(msg),
+						&uid) < 0) {
+			DBG("Can not get unix user id!");
+			return __connman_error_permission_denied(msg);
+		}
+
+		if (!connman_service_is_user_allowed(service, uid)) {
+			DBG("Not allow this user to remove this wifi service now!");
+			return __connman_error_permission_denied(msg);
+		}
+	}
 
 	if (!__connman_service_remove(service))
 		return __connman_error_not_supported(msg);
@@ -4583,6 +4681,11 @@ static void service_initialize(struct connman_service *service)
 
 	service->ignore = false;
 
+	service->user.favorite_user = USER_NONE;
+	service->user.current_user = USER_NONE;
+
+	service->request_passphrase_input = false;
+
 	service->connect_reason = CONNMAN_SERVICE_CONNECT_REASON_NONE;
 
 	service->order = 0;
@@ -4806,6 +4909,40 @@ char *connman_service_get_interface(struct connman_service *service)
 	index = __connman_service_get_index(service);
 
 	return connman_inet_ifname(index);
+}
+
+/**
+ * __connman_service_is_user_allowed:
+ * @type: service type
+ * @uid: user id
+ *
+ * Check a user is allowed to operate a type of service
+ */
+bool __connman_service_is_user_allowed(enum connman_service_type type,
+					uid_t uid)
+{
+	GList *list;
+	uid_t owner_user = USER_NONE;
+
+	for (list = service_list; list; list = list->next) {
+		struct connman_service *service = list->data;
+
+		if (service->type != type)
+			continue;
+
+		if (is_connected(service)) {
+			owner_user = service->user.favorite_user;
+			break;
+		}
+	}
+
+	if (uid == USER_NONE ||
+			(uid != USER_ROOT &&
+			owner_user != USER_NONE &&
+			owner_user != uid))
+		return false;
+
+	return true;
 }
 
 /**
@@ -5487,6 +5624,20 @@ static int service_indicate_state(struct connman_service *service)
 		default_changed();
 	}
 
+	if (service->type == CONNMAN_SERVICE_TYPE_WIFI &&
+		service->connect_reason == CONNMAN_SERVICE_CONNECT_REASON_USER &&
+		(new_state == CONNMAN_SERVICE_STATE_READY ||
+		new_state == CONNMAN_SERVICE_STATE_ONLINE)) {
+		if (service->user.favorite_user != service->user.current_user) {
+			DBG("Now set service favorite user id from %d to %d",
+			service->user.favorite_user, service->user.current_user);
+
+			service->user.favorite_user = service->user.current_user;
+
+			service_save(service);
+		}
+	}
+
 	return 0;
 }
 
@@ -5898,7 +6049,11 @@ static int service_connect(struct connman_service *service)
 		case CONNMAN_SERVICE_SECURITY_PSK:
 		case CONNMAN_SERVICE_SECURITY_WPA:
 		case CONNMAN_SERVICE_SECURITY_RSN:
-			if (!service->passphrase) {
+			if (service->request_passphrase_input) {
+				DBG("Now try to connect other user's favorite service");
+				service->request_passphrase_input = false;
+				return -ENOKEY;
+			} else if (!service->passphrase) {
 				if (!service->network)
 					return -EOPNOTSUPP;
 
