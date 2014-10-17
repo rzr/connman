@@ -102,6 +102,20 @@ static DBusMessage *set_property(DBusConnection *conn,
 
 		dbus_message_iter_get_basic(&value, &offlinemode);
 
+		if (offlinemode) {
+			uid_t uid;
+			if (connman_dbus_get_connection_unix_user_sync(conn,
+						dbus_message_get_sender(msg),
+						&uid) < 0) {
+				DBG("Can not get unix user id!");
+				return __connman_error_permission_denied(msg);
+			}
+
+			if (!__connman_service_is_user_allowed(CONNMAN_SERVICE_TYPE_WIFI, uid)) {
+				DBG("Not allow this user to turn on offlinemode now!");
+				return __connman_error_permission_denied(msg);
+			}
+		}
 		__connman_technology_set_offlinemode(offlinemode);
 	} else if (g_str_equal(name, "SessionMode")) {
 
