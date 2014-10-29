@@ -11,7 +11,7 @@ include_HEADERS = include/log.h include/plugin.h \
 			include/device.h include/network.h include/inet.h \
 			include/storage.h include/provision.h \
 			include/session.h include/ipaddress.h include/agent.h \
-			include/inotify.h include/peer.h
+			include/inotify.h include/peer.h include/machine.h
 
 nodist_include_HEADERS = include/version.h
 
@@ -105,7 +105,8 @@ src_connmand_SOURCES = $(gdhcp_sources) $(gweb_sources) \
 			src/session.c src/tethering.c src/wpad.c src/wispr.c \
 			src/stats.c src/iptables.c src/dnsproxy.c src/6to4.c \
 			src/ippool.c src/bridge.c src/nat.c src/ipaddress.c \
-			src/inotify.c src/firewall.c src/ipv6pd.c src/peer.c
+			src/inotify.c src/firewall.c src/ipv6pd.c src/peer.c \
+			src/peer_service.c src/machine.c
 
 src_connmand_LDADD = gdbus/libgdbus-internal.la $(builtin_libadd) \
 			@GLIB_LIBS@ @DBUS_LIBS@ @XTABLES_LIBS@ @GNUTLS_LIBS@ \
@@ -263,7 +264,8 @@ unit_test_prf_sha1_SOURCES = unit/test-prf-sha1.c \
 				src/shared/sha1.h src/shared/sha1.c
 unit_test_prf_sha1_LDADD = @GLIB_LIBS@
 
-unit_test_ippool_SOURCES = src/log.c src/dbus.c src/ippool.c unit/test-ippool.c
+unit_test_ippool_SOURCES = src/log.c src/dbus.c src/error.c \
+					src/ippool.c unit/test-ippool.c
 unit_test_ippool_LDADD = gdbus/libgdbus-internal.la \
 				@GLIB_LIBS@ @DBUS_LIBS@ -ldl
 
@@ -319,7 +321,7 @@ tools_iptables_test_LDADD = @GLIB_LIBS@ @XTABLES_LIBS@ -ldl
 
 tools_private_network_test_LDADD = @GLIB_LIBS@ @DBUS_LIBS@
 
-tools_session_test_SOURCES = src/log.c src/dbus.c \
+tools_session_test_SOURCES = src/log.c src/dbus.c src/error.c \
 		tools/session-test.c tools/session-utils.c tools/manager-api.c \
 		tools/session-api.c tools/session-test.h
 tools_session_test_LDADD = gdbus/libgdbus-internal.la \

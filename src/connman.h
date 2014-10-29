@@ -88,12 +88,13 @@ int __connman_counter_unregister(const char *owner, const char *path);
 int __connman_counter_init(void);
 void __connman_counter_cleanup(void);
 
+#include <connman/agent.h>
+
 struct connman_service;
+struct connman_peer;
 
 void __connman_agent_cancel(struct connman_service *service);
 
-int __connman_service_add_passphrase(struct connman_service *service,
-					const gchar *passphrase);
 typedef void (* authentication_cb_t) (struct connman_service *service,
 				bool values_received,
 				const char *name, int name_len,
@@ -103,6 +104,9 @@ typedef void (* authentication_cb_t) (struct connman_service *service,
 typedef void (* browser_authentication_cb_t) (struct connman_service *service,
 				bool authentication_done,
 				const char *error, void *user_data);
+typedef void (* peer_wps_cb_t) (struct connman_peer *peer, bool choice_done,
+				const char *wpspin, const char *error,
+				void *user_data);
 int __connman_agent_request_passphrase_input(struct connman_service *service,
 				authentication_cb_t callback,
 				const char *dbus_sender, void *user_data);
@@ -111,6 +115,16 @@ int __connman_agent_request_login_input(struct connman_service *service,
 int __connman_agent_request_browser(struct connman_service *service,
 				browser_authentication_cb_t callback,
 				const char *url, void *user_data);
+int __connman_agent_report_peer_error(struct connman_peer *peer,
+					const char *path, const char *error,
+					report_error_cb_t callback,
+					const char *dbus_sender,
+					void *user_data);
+int __connman_agent_request_peer_authorization(struct connman_peer *peer,
+						peer_wps_cb_t callback,
+						bool wps_requested,
+						const char *dbus_sender,
+						void *user_data);
 
 #include <connman/log.h>
 
@@ -383,7 +397,6 @@ int __connman_ipconfig_address_remove(struct connman_ipconfig *ipconfig);
 int __connman_ipconfig_address_unset(struct connman_ipconfig *ipconfig);
 int __connman_ipconfig_gateway_add(struct connman_ipconfig *ipconfig);
 void __connman_ipconfig_gateway_remove(struct connman_ipconfig *ipconfig);
-unsigned char __connman_ipaddress_netmask_prefix_len(const char *netmask);
 
 int __connman_ipconfig_set_proxy_autoconfig(struct connman_ipconfig *ipconfig,
 							const char *url);
@@ -400,6 +413,7 @@ int __connman_ipconfig_load(struct connman_ipconfig *ipconfig,
 int __connman_ipconfig_save(struct connman_ipconfig *ipconfig,
 		GKeyFile *keyfile, const char *identifier, const char *prefix);
 bool __connman_ipconfig_ipv6_privacy_enabled(struct connman_ipconfig *ipconfig);
+int __connman_ipconfig_ipv6_reset_privacy(struct connman_ipconfig *ipconfig);
 int __connman_ipconfig_ipv6_set_privacy(struct connman_ipconfig *ipconfig,
 					const char *value);
 bool __connman_ipconfig_ipv6_is_enabled(struct connman_ipconfig *ipconfig);
@@ -434,10 +448,13 @@ enum __connman_dhcpv6_status {
 typedef void (* dhcpv6_cb) (struct connman_network *network,
 			enum __connman_dhcpv6_status status, gpointer data);
 
-typedef void (* dhcp_cb) (struct connman_network *network,
+typedef void (* dhcp_cb) (struct connman_ipconfig *ipconfig,
+			struct connman_network *opt_network,
 			bool success, gpointer data);
-int __connman_dhcp_start(struct connman_network *network, dhcp_cb callback);
-void __connman_dhcp_stop(struct connman_network *network);
+int __connman_dhcp_start(struct connman_ipconfig *ipconfig,
+			struct connman_network *network, dhcp_cb callback,
+			gpointer user_data);
+void __connman_dhcp_stop(struct connman_ipconfig *ipconfig);
 int __connman_dhcp_init(void);
 void __connman_dhcp_cleanup(void);
 int __connman_dhcpv6_init(void);
@@ -711,8 +728,6 @@ void __connman_service_set_hidden_data(struct connman_service *service,
 				gpointer user_data);
 void __connman_service_return_error(struct connman_service *service,
 				int error, gpointer user_data);
-void __connman_service_reply_dbus_pending(DBusMessage *pending, int error,
-					const char *path);
 
 int __connman_service_provision_changed(const char *ident);
 void __connman_service_set_config(struct connman_service *service,
@@ -720,6 +735,7 @@ void __connman_service_set_config(struct connman_service *service,
 
 const char *__connman_service_type2string(enum connman_service_type type);
 enum connman_service_type __connman_service_string2type(const char *str);
+enum connman_service_security __connman_service_string2security(const char *str);
 
 int __connman_service_nameserver_append(struct connman_service *service,
 				const char *nameserver, bool is_auto);
@@ -780,6 +796,23 @@ int __connman_peer_init(void);
 void __connman_peer_cleanup(void);
 
 void __connman_peer_list_struct(DBusMessageIter *array);
+const char *__connman_peer_get_path(struct connman_peer *peer);
+
+int __connman_peer_service_init(void);
+void __connman_peer_service_cleanup(void);
+
+void __connman_peer_service_set_driver(struct connman_peer_driver *driver);
+int __connman_peer_service_register(const char *owner, DBusMessage *msg,
+					const unsigned char *specification,
+					int specification_length,
+					const unsigned char *query,
+					int query_length, int version,
+					bool master);
+int __connman_peer_service_unregister(const char *owner,
+					const unsigned char *specification,
+					int specification_length,
+					const unsigned char *query,
+					int query_length, int version);
 
 #include <connman/session.h>
 
@@ -996,3 +1029,8 @@ int __connman_nfacct_disable(struct nfacct_context *ctx,
 				void *user_data);
 
 void __connman_nfacct_cleanup(void);
+
+#include <connman/machine.h>
+
+int __connman_machine_init(void);
+void __connman_machine_cleanup(void);

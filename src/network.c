@@ -202,7 +202,8 @@ static void dhcp_failure(struct connman_network *network)
 	__connman_ipconfig_gateway_remove(ipconfig_ipv4);
 }
 
-static void dhcp_callback(struct connman_network *network,
+static void dhcp_callback(struct connman_ipconfig *ipconfig,
+			struct connman_network *network,
 			bool success, gpointer data)
 {
 	if (success)
@@ -285,13 +286,19 @@ err:
 
 static int set_connected_dhcp(struct connman_network *network)
 {
+	struct connman_service *service;
+	struct connman_ipconfig *ipconfig_ipv4;
 	int err;
 
 	DBG("network %p", network);
 
 	set_configuration(network, CONNMAN_IPCONFIG_TYPE_IPV4);
 
-	err = __connman_dhcp_start(network, dhcp_callback);
+	service = connman_service_lookup_from_network(network);
+	ipconfig_ipv4 = __connman_service_get_ip4config(service);
+
+	err = __connman_dhcp_start(ipconfig_ipv4, network,
+							dhcp_callback, NULL);
 	if (err < 0) {
 		connman_error("Can not request DHCP lease");
 		return err;
@@ -457,6 +464,7 @@ static void check_dhcpv6(struct nd_router_advert *reply,
 			unsigned int length, void *user_data)
 {
 	struct connman_network *network = user_data;
+	struct connman_service *service;
 	GSList *prefixes;
 
 	DBG("reply %p", reply);
@@ -490,6 +498,23 @@ static void check_dhcpv6(struct nd_router_advert *reply,
 	}
 
 	prefixes = __connman_inet_ipv6_get_prefixes(reply, length);
+
+	/*
+	 * If IPv6 config is missing from service, then create it.
+	 * The ipconfig might be missing if we got a rtnl message
+	 * that disabled IPv6 config and thus removed it. This
+	 * can happen if we are switching from one service to
+	 * another in the same interface. The only way to get IPv6
+	 * config back is to re-create it here.
+	 */
+	service = connman_service_lookup_from_network(network);
+	if (service) {
+		connman_service_create_ip6config(service, network->index);
+
+		__connman_service_ipconfig_indicate_state(service,
+					CONNMAN_SERVICE_STATE_CONFIGURATION,
+					CONNMAN_IPCONFIG_TYPE_IPV6);
+	}
 
 	/*
 	 * We do stateful/stateless DHCPv6 if router advertisement says so.
@@ -586,6 +611,8 @@ static void autoconf_ipv6_set(struct connman_network *network)
 	ipconfig = __connman_service_get_ip6config(service);
 	if (!ipconfig)
 		return;
+
+	__connman_ipconfig_address_remove(ipconfig);
 
 	index = __connman_ipconfig_get_index(ipconfig);
 
@@ -717,7 +744,7 @@ static void set_disconnected(struct connman_network *network)
 		case CONNMAN_IPCONFIG_METHOD_MANUAL:
 			break;
 		case CONNMAN_IPCONFIG_METHOD_DHCP:
-			__connman_dhcp_stop(network);
+			__connman_dhcp_stop(ipconfig_ipv4);
 			break;
 		}
 	}
@@ -1385,22 +1412,6 @@ void connman_network_set_error(struct connman_network *network,
 	network_change(network);
 }
 
-void connman_network_clear_error(struct connman_network *network)
-{
-	struct connman_service *service;
-
-	DBG("network %p", network);
-
-	if (!network)
-		return;
-
-	if (network->connecting || network->associating)
-		return;
-
-	service = connman_service_lookup_from_network(network);
-	__connman_service_clear_error(service);
-}
-
 /**
  * connman_network_set_connected:
  * @network: network structure
@@ -1469,7 +1480,7 @@ void connman_network_clear_hidden(void *user_data)
 	 * error to the caller telling that we could not find
 	 * any network that we could connect to.
 	 */
-	__connman_service_reply_dbus_pending(user_data, EIO, NULL);
+	connman_dbus_reply_pending(user_data, EIO, NULL);
 }
 
 int connman_network_connect_hidden(struct connman_network *network,
@@ -1489,7 +1500,7 @@ int connman_network_connect_hidden(struct connman_network *network,
 		__connman_service_set_agent_identity(service, identity);
 
 	if (passphrase)
-		err = __connman_service_add_passphrase(service, passphrase);
+		err = __connman_service_set_passphrase(service, passphrase);
 
 	if (err == -ENOKEY) {
 		__connman_service_indicate_error(service,
@@ -1607,6 +1618,7 @@ int __connman_network_clear_ipconfig(struct connman_network *network,
 					struct connman_ipconfig *ipconfig)
 {
 	struct connman_service *service;
+	struct connman_ipconfig *ipconfig_ipv4;
 	enum connman_ipconfig_method method;
 	enum connman_ipconfig_type type;
 
@@ -1614,6 +1626,7 @@ int __connman_network_clear_ipconfig(struct connman_network *network,
 	if (!service)
 		return -EINVAL;
 
+	ipconfig_ipv4 = __connman_service_get_ip4config(service);
 	method = __connman_ipconfig_get_method(ipconfig);
 	type = __connman_ipconfig_get_config_type(ipconfig);
 
@@ -1629,7 +1642,7 @@ int __connman_network_clear_ipconfig(struct connman_network *network,
 		__connman_ipconfig_address_remove(ipconfig);
 		break;
 	case CONNMAN_IPCONFIG_METHOD_DHCP:
-		__connman_dhcp_stop(network);
+		__connman_dhcp_stop(ipconfig_ipv4);
 		break;
 	}
 
@@ -1691,7 +1704,8 @@ int __connman_network_set_ipconfig(struct connman_network *network,
 		case CONNMAN_IPCONFIG_METHOD_MANUAL:
 			return manual_ipv4_set(network, ipconfig_ipv4);
 		case CONNMAN_IPCONFIG_METHOD_DHCP:
-			return __connman_dhcp_start(network, dhcp_callback);
+			return __connman_dhcp_start(ipconfig_ipv4,
+						network, dhcp_callback, NULL);
 		}
 	}
 

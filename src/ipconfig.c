@@ -1090,8 +1090,6 @@ int __connman_ipconfig_gateway_add(struct connman_ipconfig *ipconfig)
 	if (!service)
 		return -EINVAL;
 
-	__connman_connection_gateway_remove(service, ipconfig->type);
-
 	DBG("type %d gw %s peer %s", ipconfig->type,
 		ipconfig->address->gateway, ipconfig->address->peer);
 
@@ -1703,10 +1701,6 @@ int __connman_ipconfig_disable(struct connman_ipconfig *ipconfig)
 	if (ipdevice->config_ipv6 == ipconfig) {
 		ipconfig_list = g_list_remove(ipconfig_list, ipconfig);
 
-		if (ipdevice->config_ipv6->method ==
-						CONNMAN_IPCONFIG_METHOD_AUTO)
-			disable_ipv6(ipdevice->config_ipv6);
-
 		connman_ipaddress_clear(ipdevice->config_ipv6->system);
 		__connman_ipconfig_unref(ipdevice->config_ipv6);
 		ipdevice->config_ipv6 = NULL;
@@ -1774,6 +1768,25 @@ static int string2privacy(const char *privacy)
 		return 2;
 	else
 		return 0;
+}
+
+int __connman_ipconfig_ipv6_reset_privacy(struct connman_ipconfig *ipconfig)
+{
+	struct connman_ipdevice *ipdevice;
+	int err;
+
+	if (!ipconfig)
+		return -EINVAL;
+
+	ipdevice = g_hash_table_lookup(ipdevice_hash,
+						GINT_TO_POINTER(ipconfig->index));
+	if (!ipdevice)
+		return -ENODEV;
+
+	err = __connman_ipconfig_ipv6_set_privacy(ipconfig, privacy2string(
+							ipdevice->ipv6_privacy));
+
+	return err;
 }
 
 int __connman_ipconfig_ipv6_set_privacy(struct connman_ipconfig *ipconfig,
@@ -2093,8 +2106,7 @@ int __connman_ipconfig_set_config(struct connman_ipconfig *ipconfig,
 
 	case CONNMAN_IPCONFIG_METHOD_OFF:
 		ipconfig->method = method;
-		if (ipconfig->type == CONNMAN_IPCONFIG_TYPE_IPV6)
-			disable_ipv6(ipconfig);
+
 		break;
 
 	case CONNMAN_IPCONFIG_METHOD_AUTO:
@@ -2104,7 +2116,7 @@ int __connman_ipconfig_set_config(struct connman_ipconfig *ipconfig,
 		ipconfig->method = method;
 		if (privacy_string)
 			ipconfig->ipv6_privacy_config = privacy;
-		enable_ipv6(ipconfig);
+
 		break;
 
 	case CONNMAN_IPCONFIG_METHOD_MANUAL:
@@ -2139,6 +2151,7 @@ int __connman_ipconfig_set_config(struct connman_ipconfig *ipconfig,
 			return connman_ipaddress_set_ipv6(
 					ipconfig->address, address,
 						prefix_length, gateway);
+
 		break;
 
 	case CONNMAN_IPCONFIG_METHOD_DHCP:
@@ -2168,9 +2181,11 @@ void __connman_ipconfig_append_ethernet(struct connman_ipconfig *ipconfig,
 
 	if (ipconfig->index >= 0) {
 		char *ifname = connman_inet_ifname(ipconfig->index);
-		connman_dbus_dict_append_basic(iter, "Interface",
-					DBUS_TYPE_STRING, &ifname);
-		g_free(ifname);
+		if (ifname) {
+			connman_dbus_dict_append_basic(iter, "Interface",
+						DBUS_TYPE_STRING, &ifname);
+			g_free(ifname);
+		}
 	}
 
 	if (ipdevice->address)
