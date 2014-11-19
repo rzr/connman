@@ -4472,6 +4472,30 @@ static DBusMessage *reset_counters(DBusConnection *conn,
 	return g_dbus_create_reply(msg, DBUS_TYPE_INVALID);
 }
 
+static DBusMessage *get_user_favorite(DBusConnection *conn,
+					DBusMessage *msg, void *user_data)
+{
+	DBusMessage *reply;
+	uid_t uid = USER_NONE;
+	dbus_bool_t user_favorite = false;
+	struct connman_service *service = user_data;
+
+	connman_dbus_get_connection_unix_user_sync(conn,
+					dbus_message_get_sender(msg),
+					&uid);
+	if (uid == USER_ROOT)
+		user_favorite = service->favorite;
+	else if (uid != USER_NONE && uid == service->user.favorite_user) {
+		DBG("The service is favorite to this user!");
+		user_favorite = true;
+	}
+
+	reply = g_dbus_create_reply(msg, DBUS_TYPE_INVALID);
+	dbus_message_append_args(reply, DBUS_TYPE_BOOLEAN,
+				&user_favorite, DBUS_TYPE_INVALID);
+	return reply;
+}
+
 static struct _services_notify {
 	int id;
 	GHashTable *add;
@@ -4613,6 +4637,9 @@ static const GDBusMethodTable service_methods[] = {
 			GDBUS_ARGS({ "service", "o" }), NULL,
 			move_after) },
 	{ GDBUS_METHOD("ResetCounters", NULL, NULL, reset_counters) },
+	{ GDBUS_METHOD("GetUserFavorite",
+			NULL, GDBUS_ARGS({ "value", "v" }),
+			get_user_favorite) },
 	{ },
 };
 
