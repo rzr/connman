@@ -14,7 +14,7 @@ Source0:        %{name}-%{version}.tar.gz
 Source10:       40-connman-ntp.list
 Source11:       connman-ntp.service
 Source1001:     connman.manifest
-BuildRequires: 	systemd
+BuildRequires: 	systemd-devel
 BuildRequires:  pkgconfig(dbus-1)
 BuildRequires:  pkgconfig(glib-2.0)
 BuildRequires:  pkgconfig(libiptc)
