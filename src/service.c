@@ -390,16 +390,16 @@ static GList *connman_service_get_login_users()
 	setutxent();
 
 	while ((utmp = getutxent()) != NULL) {
-		if (utmp->ut_user != USER_ROOT && utmp->ut_type != USER_PROCESS)
-			continue;
+		DBG("User Name: %s", utmp->ut_user);
 
 		pwd = getpwnam(utmp->ut_user);
-
-		if (!g_list_find(user_list, GUINT_TO_POINTER(pwd->pw_uid)))
-			user_list = g_list_append(user_list,
+		if (pwd) {
+			if (!g_list_find(user_list, GUINT_TO_POINTER(pwd->pw_uid)))
+				user_list = g_list_append(user_list,
 						GUINT_TO_POINTER(pwd->pw_uid));
 
-		DBG("User Name: %s, UID: %d", utmp->ut_user, pwd->pw_uid);
+			DBG("User Name: %s, UID: %d", utmp->ut_user, pwd->pw_uid);
+		}
 	}
 
 	endutxent();
@@ -416,9 +416,13 @@ static bool is_service_owner_user_login(struct connman_service *service)
 	if (service->type != CONNMAN_SERVICE_TYPE_WIFI)
 		return true;
 
-	user_list = connman_service_get_login_users();
-
 	DBG("service favorite user id is: %d", service->user.favorite_user);
+
+	user_list = connman_service_get_login_users();
+	if (user_list == NULL) {
+		DBG("Can not get any logged in user info.");
+		return true;
+	}
 
 	for (list = user_list; list; list = list->next) {
 		uid_t uid = GPOINTER_TO_UINT(list->data);
