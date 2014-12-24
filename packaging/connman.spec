@@ -115,18 +115,15 @@ make %{?_smp_mflags}
 mkdir -p %{buildroot}/usr/lib/systemd/ntp-units.d
 install -m644 %{SOURCE10} %{buildroot}/usr/lib/systemd/ntp-units.d
 install -m644 %{SOURCE11} %{buildroot}%{_unitdir}
-%install_service network.target.wants connman-ntp.service
 %install_service multi-user.target.wants connman-ntp.service
 %endif
 
 mkdir -p %{buildroot}%{_sysconfdir}/connman
 cp src/main.conf %{buildroot}%{_sysconfdir}/connman/main.conf
 
-%install_service network.target.wants connman.service
 %install_service multi-user.target.wants connman.service
 
 %if %{with connman_vpnd}
-%install_service network.target.wants connman-vpn.service
 %install_service multi-user.target.wants connman-vpn.service
 %endif
 
@@ -157,13 +154,11 @@ systemctl daemon-reload
 %config %{_sysconfdir}/connman/main.conf
 %config %{_sysconfdir}/dbus-1/system.d/*
 %{_unitdir}/connman.service
-%{_unitdir}/network.target.wants/connman.service
 %{_unitdir}/multi-user.target.wants/connman.service
 %if %{with connman_ntp}
 %dir /usr/lib/systemd/ntp-units.d
 %{_unitdir}/connman-ntp.service
 %{_unitdir}/multi-user.target.wants/connman-ntp.service
-%{_unitdir}/network.target.wants/connman-ntp.service
 /usr/lib/systemd/ntp-units.d/40-connman-ntp.list
 %endif
 
@@ -199,7 +194,6 @@ systemctl daemon-reload
 %manifest %{name}.manifest
 %{_sbindir}/connman-vpnd
 %{_unitdir}/connman-vpn.service
-%{_unitdir}/network.target.wants/connman-vpn.service
 %{_unitdir}/multi-user.target.wants/connman-vpn.service
 %dir %{_libdir}/%{name}
 %dir %{_libdir}/%{name}/scripts
