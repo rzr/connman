@@ -1098,7 +1098,6 @@ static int try_provision_service(struct connman_config_service *config,
 	enum connman_service_type type;
 	const void *ssid;
 	unsigned int ssid_len;
-	const char *str;
 
 	network = __connman_service_get_network(service);
 	if (!network) {
@@ -1127,10 +1126,6 @@ static int try_provision_service(struct connman_config_service *config,
 			return -ENOENT;
 
 		if (memcmp(config->ssid, ssid, ssid_len))
-			return -ENOENT;
-
-		str = connman_network_get_string(network, "WiFi.Security");
-		if (config->security != __connman_service_string2security(str))
 			return -ENOENT;
 
 		break;
