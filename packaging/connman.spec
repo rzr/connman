@@ -118,6 +118,9 @@ install -m644 %{SOURCE11} %{buildroot}%{_unitdir}
 %install_service multi-user.target.wants connman-ntp.service
 %endif
 
+mkdir -p %{buildroot}%{_localstatedir}/lib/connman
+cp resources/var/lib/connman/settings %{buildroot}%{_localstatedir}/lib/connman/settings
+
 mkdir -p %{buildroot}%{_sysconfdir}/connman
 cp src/main.conf %{buildroot}%{_sysconfdir}/connman/main.conf
 
@@ -151,6 +154,7 @@ systemctl daemon-reload
 %{_sbindir}/*
 %{_libdir}/connman/plugins/*.so
 %{_datadir}/man/*
+%attr(600,root,root) %{_localstatedir}/lib/connman/settings
 %config %{_sysconfdir}/connman/main.conf
 %config %{_sysconfdir}/dbus-1/system.d/*
 %{_unitdir}/connman.service
