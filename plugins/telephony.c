@@ -1202,8 +1202,11 @@ static void __set_network_connected(struct telephony_network *network,
 	case CONNMAN_IPCONFIG_METHOD_OFF:
 	case CONNMAN_IPCONFIG_METHOD_MANUAL:
 	case CONNMAN_IPCONFIG_METHOD_DHCP:
+		break;
 	case CONNMAN_IPCONFIG_METHOD_AUTO:
-		DBG("ipv6 not supported");
+		connman_network_set_ipv6_method(network->network,
+							network->ipv6_method);
+		setip = TRUE;
 		break;
 
 	case CONNMAN_IPCONFIG_METHOD_FIXED:

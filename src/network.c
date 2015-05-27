@@ -614,6 +614,11 @@ static void autoconf_ipv6_set(struct connman_network *network)
 
 	network->connecting = false;
 
+#if defined TIZEN_EXT
+		if(network->type == CONNMAN_NETWORK_TYPE_CELLULAR)
+			return;
+#endif
+
 	service = connman_service_lookup_from_network(network);
 	if (!service)
 		return;
@@ -664,6 +669,12 @@ static void set_connected(struct connman_network *network)
 		break;
 	case CONNMAN_IPCONFIG_METHOD_DHCP:
 	case CONNMAN_IPCONFIG_METHOD_AUTO:
+#if defined TIZEN_EXT
+		if(network->type == CONNMAN_NETWORK_TYPE_CELLULAR)
+			__connman_service_ipconfig_indicate_state(service,
+				CONNMAN_SERVICE_STATE_CONFIGURATION,
+					CONNMAN_IPCONFIG_TYPE_IPV6);
+#endif
 		autoconf_ipv6_set(network);
 		break;
 	case CONNMAN_IPCONFIG_METHOD_FIXED:
