@@ -61,12 +61,6 @@ AC_ARG_ENABLE(hh2serial-gps,
 AM_CONDITIONAL(HH2SERIAL_GPS, test "${enable_hh2serial_gps}" != "no")
 AM_CONDITIONAL(HH2SERIAL_GPS_BUILTIN, test "${enable_hh2serial_gps}" = "builtin")
 
-AC_ARG_ENABLE(tizen-ext,
-	AC_HELP_STRING([--enable-tizen-ext], [enable TIZEN extensions]),
-			[if (test "${enableval}" = "yes"); then
-				CFLAGS="$CFLAGS -DTIZEN_EXT"
-			fi])
-
 AC_ARG_ENABLE(telephony,
 	AC_HELP_STRING([--enable-telephony], [enable Telephony support]),
 			[enable_telephony=${enableval}], [enable_telephony="yes"])

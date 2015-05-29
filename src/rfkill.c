@@ -73,7 +73,6 @@ static enum connman_service_type convert_type(uint8_t type)
 	return CONNMAN_SERVICE_TYPE_UNKNOWN;
 }
 
-#if !defined TIZEN_EXT
 static enum rfkill_type convert_service_type(enum connman_service_type type)
 {
 	switch (type) {
@@ -96,7 +95,6 @@ static enum rfkill_type convert_service_type(enum connman_service_type type)
 
 	return NUM_RFKILL_TYPES;
 }
-#endif
 
 static GIOStatus rfkill_process(GIOChannel *chan)
 {
@@ -159,20 +157,13 @@ static GIOChannel *channel = NULL;
 
 int __connman_rfkill_block(enum connman_service_type type, bool block)
 {
-#if !defined TIZEN_EXT
 	uint8_t rfkill_type;
 	struct rfkill_event event;
 	ssize_t len;
 	int fd, err;
-#endif
 
 	DBG("type %d block %d", type, block);
 
-#if defined TIZEN_EXT
-	DBG("try to set rfkill block %d, but it's not permitted", block);
-
-	return 0;
-#else
 	rfkill_type = convert_service_type(type);
 	if (rfkill_type == NUM_RFKILL_TYPES)
 		return -EINVAL;
@@ -196,7 +187,6 @@ int __connman_rfkill_block(enum connman_service_type type, bool block)
 	close(fd);
 
 	return err;
-#endif
 }
 
 int __connman_rfkill_init(void)

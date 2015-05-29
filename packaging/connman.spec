@@ -94,7 +94,6 @@ chmod +x bootstrap
             --enable-threads \
             --enable-client \
             --enable-pacrunner \
-            --enable-tizen-ext \
             --enable-wifi=builtin \
 %if %{with connman_openconnect}
             --enable-openconnect \
