@@ -192,7 +192,11 @@ struct domain_rr {
  * By default the TTL (time-to-live) of the DNS response is used
  * when setting the cache entry life time. The value is in seconds.
  */
+#if defined TIZEN_EXT
+#define MAX_CACHE_TTL (60 * 60)
+#else
 #define MAX_CACHE_TTL (60 * 30)
+#endif
 /*
  * Also limit the other end, cache at least for 30 seconds.
  */
@@ -211,10 +215,21 @@ static int cache_size;
 static GHashTable *cache;
 static int cache_refcount;
 static GSList *server_list = NULL;
+#if defined TIZEN_EXT
+static GSList *server_list_sec = NULL;
+#endif
 static GSList *request_list = NULL;
 static GHashTable *listener_table = NULL;
 static time_t next_refresh;
 static GHashTable *partial_tcp_req_table;
+static guint cache_timer = 0;
+
+#if defined TIZEN_EXT
+static void destroy_server_sec(struct server_data *server);
+static struct server_data *create_server_sec(int index,
+		const char *domain, const char *server,
+		int protocol);
+#endif
 
 static guint16 get_id(void)
 {
@@ -1635,6 +1650,31 @@ static int ns_resolv(struct server_data *server, struct request_data *req,
 		}
 	}
 
+#if defined TIZEN_EXT
+	if (server->protocol == IPPROTO_UDP) {
+		GList *domains;
+		struct server_data *new_server = NULL;
+
+		new_server = create_server_sec(server->index, NULL,
+						server->server, IPPROTO_UDP);
+
+		if (new_server != NULL) {
+			for (domains = server->domains; domains;
+						domains = domains->next) {
+				char *dom = domains->data;
+
+				DBG("Adding domain %s to %s",
+						dom, new_server->server);
+
+				new_server->domains = g_list_append(
+						new_server->domains,
+							g_strdup(dom));
+			}
+
+			server = new_server;
+		}
+	}
+#endif
 	sk = g_io_channel_unix_get_fd(server->channel);
 
 	err = sendto(sk, request, req->request_len, MSG_NOSIGNAL,
@@ -2233,6 +2273,19 @@ static gboolean udp_server_event(GIOChannel *channel, GIOCondition condition,
 	if (err < 0)
 		return TRUE;
 
+#if defined TIZEN_EXT
+	GSList *list;
+
+	for (list = server_list_sec; list; list = list->next) {
+		struct server_data *new_data = list->data;
+
+		if (new_data == data) {
+			destroy_server_sec(data);
+			return TRUE;
+		}
+	}
+#endif
+
 	return TRUE;
 }
 
@@ -2522,6 +2575,169 @@ static int server_create_socket(struct server_data *data)
 	return 0;
 }
 
+#if defined TIZEN_EXT
+
+static void destroy_server_sec(struct server_data *server)
+{
+	GList *list;
+
+	DBG("index %d server %s sock %d", server->index, server->server,
+			server->channel != NULL ?
+			g_io_channel_unix_get_fd(server->channel): -1);
+
+	server_list_sec = g_slist_remove(server_list_sec, server);
+	close(g_io_channel_unix_get_fd(server->channel));
+	server_destroy_socket(server);
+
+	if (server->protocol == IPPROTO_UDP && server->enabled)
+		DBG("Removing DNS server %s", server->server);
+
+	g_free(server->server);
+	for (list = server->domains; list; list = list->next) {
+		char *domain = list->data;
+
+		server->domains = g_list_remove(server->domains, domain);
+		g_free(domain);
+	}
+	g_free(server->server_addr);
+
+	/*
+	 * We do not remove cache right away but delay it few seconds.
+	 * The idea is that when IPv6 DNS server is added via RDNSS, it has a
+	 * lifetime. When the lifetime expires we decrease the refcount so it
+	 * is possible that the cache is then removed. Because a new DNS server
+	 * is usually created almost immediately we would then loose the cache
+	 * without any good reason. The small delay allows the new RDNSS to
+	 * create a new DNS server instance and the refcount does not go to 0.
+	 */
+	/* TODO: Need to check this */
+	/* g_timeout_add_seconds(3, try_remove_cache, NULL); */
+
+	g_free(server);
+}
+
+static void destroy_all_server_sec()
+{
+	GSList *list;
+
+	DBG("remove all dns server");
+
+	for (list = server_list_sec; list; list = list->next) {
+		struct server_data *server = list->data;
+		destroy_server_sec(server);
+	}
+	server_list_sec = NULL;
+}
+
+static gboolean sec_udp_idle_timeout(gpointer user_data)
+{
+	struct server_data *server = user_data;
+
+	DBG("");
+
+	if (server == NULL)
+		return FALSE;
+
+	destroy_server_sec(server);
+
+	return FALSE;
+}
+
+static struct server_data *create_server_sec(int index,
+					const char *domain, const char *server,
+					int protocol)
+{
+	struct server_data *data;
+	struct addrinfo hints, *rp;
+	int ret;
+
+	DBG("index %d server %s", index, server);
+
+	data = g_try_new0(struct server_data, 1);
+	if (data == NULL) {
+		connman_error("Failed to allocate server %s data", server);
+		return NULL;
+	}
+
+	data->index = index;
+	if (domain)
+		data->domains = g_list_append(data->domains, g_strdup(domain));
+	data->server = g_strdup(server);
+	data->protocol = protocol;
+
+	memset(&hints, 0, sizeof(hints));
+
+	switch (protocol) {
+	case IPPROTO_UDP:
+		hints.ai_socktype = SOCK_DGRAM;
+		break;
+
+	case IPPROTO_TCP:
+		hints.ai_socktype = SOCK_STREAM;
+		break;
+
+	default:
+		destroy_server_sec(data);
+		return NULL;
+	}
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_flags = AI_NUMERICSERV | AI_NUMERICHOST;
+
+	ret = getaddrinfo(data->server, "53", &hints, &rp);
+	if (ret) {
+		connman_error("Failed to parse server %s address: %s\n",
+				data->server, gai_strerror(ret));
+		destroy_server_sec(data);
+		return NULL;
+	}
+
+	/* Do not blindly copy this code elsewhere; it doesn't loop over the
+	   results using ->ai_next as it should. That's OK in *this* case
+	   because it was a numeric lookup; we *know* there's only one. */
+
+	data->server_addr_len = rp->ai_addrlen;
+
+	switch (rp->ai_family) {
+	case AF_INET:
+		data->server_addr = (struct sockaddr *)
+					g_try_new0(struct sockaddr_in, 1);
+		break;
+	case AF_INET6:
+		data->server_addr = (struct sockaddr *)
+					g_try_new0(struct sockaddr_in6, 1);
+		break;
+	default:
+		connman_error("Wrong address family %d", rp->ai_family);
+		break;
+	}
+	if (data->server_addr == NULL) {
+		freeaddrinfo(rp);
+		destroy_server_sec(data);
+		return NULL;
+	}
+	memcpy(data->server_addr, rp->ai_addr, rp->ai_addrlen);
+	freeaddrinfo(rp);
+
+	if (server_create_socket(data) != 0) {
+		destroy_server_sec(data);
+		return NULL;
+	}
+
+	if (protocol == IPPROTO_UDP) {
+		/* Enable new servers by default */
+		data->enabled = TRUE;
+		DBG("Adding DNS server %s", data->server);
+
+		data->timeout = g_timeout_add_seconds(30, sec_udp_idle_timeout,
+								data);
+
+		server_list_sec = g_slist_append(server_list_sec, data);
+	}
+
+	return data;
+}
+#endif
+
 static struct server_data *create_server(int index,
 					const char *domain, const char *server,
 					int protocol)
@@ -2750,6 +2966,10 @@ int __connman_dnsproxy_remove(int index, const char *domain,
 	remove_server(index, domain, server, IPPROTO_UDP);
 	remove_server(index, domain, server, IPPROTO_TCP);
 
+#if defined TIZEN_EXT
+	destroy_all_server_sec();
+#endif
+
 	return 0;
 }
 
@@ -2889,6 +3109,21 @@ static int parse_request(unsigned char *buf, int len,
 		ptr += label_len + 1;
 		remain -= label_len + 1;
 	}
+
+#if defined TIZEN_EXT
+	/* parse DNS query type either A or AAAA
+	 * enforce to drop AAAA temporarily (IPv6 not supported)
+	 */
+	if (last_label != NULL) {
+		uint16_t *type_p = (uint16_t *)last_label;
+		uint16_t type = ntohs(*type_p);
+
+		if (type == 0x1c) {
+			DBG("query %s is type AAAA(0x%x)", name, type);
+			return -ENOENT;
+		}
+	}
+#endif
 
 	if (last_label && arcount && remain >= 9 && last_label[4] == 0 &&
 				!memcmp(last_label + 5, opt_edns0_type, 2)) {
@@ -3220,6 +3455,23 @@ static gboolean client_timeout(gpointer user_data)
 	return FALSE;
 }
 
+#if defined TIZEN_EXT
+static void recover_listener(GIOChannel *channel, struct listener_data *ifdata)
+{
+	int sk, index;
+
+	index = ifdata->index;
+
+	sk = g_io_channel_unix_get_fd(channel);
+	close(sk);
+
+	__connman_dnsproxy_remove_listener(index);
+
+	if (__connman_dnsproxy_add_listener(index) == 0)
+		DBG("listener %d successfully recovered", index);
+}
+#endif
+
 static bool tcp_listener_event(GIOChannel *channel, GIOCondition condition,
 				struct listener_data *ifdata, int family,
 				guint *listener_watch)
@@ -3240,11 +3492,17 @@ static bool tcp_listener_event(GIOChannel *channel, GIOCondition condition,
 		condition, channel, ifdata, family);
 
 	if (condition & (G_IO_NVAL | G_IO_ERR | G_IO_HUP)) {
+#if defined TIZEN_EXT
+		connman_error("Error %d with TCP listener channel", condition);
+
+		recover_listener(channel, ifdata);
+#else
 		if (*listener_watch > 0)
 			g_source_remove(*listener_watch);
 		*listener_watch = 0;
 
 		connman_error("Error with TCP listener channel");
+#endif
 
 		return false;
 	}
@@ -3358,7 +3616,11 @@ static bool tcp_listener_event(GIOChannel *channel, GIOCondition condition,
 	 * The packet length bytes do not contain the total message length,
 	 * that is the reason to -2 below.
 	 */
+#if defined TIZEN_EXT
+	if (msg_len > (unsigned int)(len - 2)) {
+#else
 	if (msg_len != (unsigned int)(len - 2)) {
+#endif
 		DBG("client %d sent %d bytes but expecting %u pending %d",
 			client_sk, len, msg_len + 2, msg_len + 2 - len);
 
@@ -3387,6 +3649,41 @@ static gboolean tcp6_listener_event(GIOChannel *channel, GIOCondition condition,
 				&ifdata->tcp6_listener_watch);
 }
 
+#if defined TIZEN_EXT
+/* Temporarily disable AAAA type to enhance performance (IPv6 not supported) */
+static void __send_response_not_implemented(int sk, unsigned char *buf, int len,
+				const struct sockaddr *to, socklen_t tolen,
+				int protocol)
+{
+	struct domain_hdr *hdr;
+	int err, offset = protocol_offset(protocol);
+
+	DBG("sk %d", sk);
+
+	if (offset < 0)
+		return;
+
+	if (len < 12)
+		return;
+
+	hdr = (void *) (buf + offset);
+
+	DBG("id 0x%04x qr %d opcode %d", hdr->id, hdr->qr, hdr->opcode);
+
+	hdr->qr = 1;
+	hdr->rcode = 4;
+
+	hdr->ancount = 0;
+	hdr->nscount = 0;
+	hdr->arcount = 0;
+
+	err = sendto(sk, buf, len, MSG_NOSIGNAL, to, tolen);
+	if (err < 0)
+		connman_error("Failed to send DNS response to %d: %s",
+				sk, strerror(errno));
+}
+#endif
+
 static bool udp_listener_event(GIOChannel *channel, GIOCondition condition,
 				struct listener_data *ifdata, int family,
 				guint *listener_watch)
@@ -3403,8 +3700,14 @@ static bool udp_listener_event(GIOChannel *channel, GIOCondition condition,
 	int sk, err, len;
 
 	if (condition & (G_IO_NVAL | G_IO_ERR | G_IO_HUP)) {
+#if defined TIZEN_EXT
+		connman_error("Error %d with UDP listener channel", condition);
+
+		recover_listener(channel, ifdata);
+#else
 		connman_error("Error with UDP listener channel");
 		*listener_watch = 0;
+#endif
 		return false;
 	}
 
@@ -3427,6 +3730,16 @@ static bool udp_listener_event(GIOChannel *channel, GIOCondition condition,
 
 	err = parse_request(buf, len, query, sizeof(query));
 	if (err < 0 || (g_slist_length(server_list) == 0)) {
+#if defined TIZEN_EXT
+		if (err == -ENOENT) {
+			/* Temporarily disable AAAA type to enhance performance
+			 * (IPv6 not supported)
+			 */
+			__send_response_not_implemented(sk, buf, len, client_addr,
+									*client_addr_len, IPPROTO_UDP);
+			return TRUE;
+		}
+#endif
 		send_response(sk, buf, len, client_addr,
 				*client_addr_len, IPPROTO_UDP);
 		return true;
@@ -3460,7 +3773,15 @@ static bool udp_listener_event(GIOChannel *channel, GIOCondition condition,
 		return true;
 	}
 
+	req->name = g_strdup(query);
+	req->request = g_malloc(len);
+	memcpy(req->request, buf, len);
+#if defined TIZEN_EXT
+	DBG("req %p dstid 0x%04x altid 0x%04x", req, req->dstid, req->altid);
+	req->timeout = g_timeout_add_seconds(30, request_timeout, req);
+#else
 	req->timeout = g_timeout_add_seconds(5, request_timeout, req);
+#endif
 	request_list = g_slist_append(request_list, req);
 
 	return true;
@@ -3495,7 +3816,12 @@ static GIOChannel *get_listener(int family, int protocol, int index)
 	} s;
 	socklen_t slen;
 	int sk, type;
+#if !defined TIZEN_EXT
 	char *interface;
+#endif
+#if defined TIZEN_EXT
+	int option;
+#endif
 
 	DBG("family %d protocol %d index %d", family, protocol, index);
 
@@ -3525,6 +3851,10 @@ static GIOChannel *get_listener(int family, int protocol, int index)
 		return NULL;
 	}
 
+#if !defined TIZEN_EXT
+	/* ConnMan listens DNS from multiple interfaces
+	 * E.g. various technology based and tethering interfaces
+	 */
 	interface = connman_inet_ifname(index);
 	if (!interface || setsockopt(sk, SOL_SOCKET, SO_BINDTODEVICE,
 					interface,
@@ -3538,13 +3868,16 @@ static GIOChannel *get_listener(int family, int protocol, int index)
 		return NULL;
 	}
 	g_free(interface);
+#endif
 
 	if (family == AF_INET6) {
 		memset(&s.sin6, 0, sizeof(s.sin6));
 		s.sin6.sin6_family = AF_INET6;
 		s.sin6.sin6_port = htons(53);
 		slen = sizeof(s.sin6);
-
+#if defined TIZEN_EXT
+		s.sin6.sin6_addr = in6addr_any;
+#else
 		if (__connman_inet_get_interface_address(index,
 						AF_INET6,
 						&s.sin6.sin6_addr) < 0) {
@@ -3555,24 +3888,34 @@ static GIOChannel *get_listener(int family, int protocol, int index)
 			close(sk);
 			return NULL;
 		}
+#endif
 
 	} else if (family == AF_INET) {
 		memset(&s.sin, 0, sizeof(s.sin));
 		s.sin.sin_family = AF_INET;
 		s.sin.sin_port = htons(53);
 		slen = sizeof(s.sin);
-
+#if defined TIZEN_EXT
+		s.sin.sin_addr.s_addr = htonl(INADDR_ANY);
+#else
 		if (__connman_inet_get_interface_address(index,
 						AF_INET,
 						&s.sin.sin_addr) < 0) {
 			close(sk);
 			return NULL;
 		}
+#endif
 	} else {
 		close(sk);
 		return NULL;
 	}
 
+#if defined TIZEN_EXT
+	/* When ConnMan crashed,
+	 * probably DNS listener cannot bind existing address */
+	option = 1;
+	setsockopt(sk, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option));
+#endif
 	if (bind(sk, &s.sa, slen) < 0) {
 		connman_error("Failed to bind %s listener socket", proto);
 		close(sk);
@@ -3620,40 +3963,68 @@ static int create_dns_listener(int protocol, struct listener_data *ifdata)
 		ifdata->tcp4_listener_channel = get_listener(AF_INET, protocol,
 							ifdata->index);
 		if (ifdata->tcp4_listener_channel)
+#if defined TIZEN_EXT
+			ifdata->tcp4_listener_watch =
+				g_io_add_watch(ifdata->tcp4_listener_channel,
+					G_IO_IN | G_IO_ERR | G_IO_HUP | G_IO_NVAL,
+					tcp4_listener_event, (gpointer)ifdata);
+#else
 			ifdata->tcp4_listener_watch =
 				g_io_add_watch(ifdata->tcp4_listener_channel,
 					G_IO_IN, tcp4_listener_event,
 					(gpointer)ifdata);
+#endif
 		else
 			ret |= TCP_IPv4_FAILED;
 
 		ifdata->tcp6_listener_channel = get_listener(AF_INET6, protocol,
 							ifdata->index);
 		if (ifdata->tcp6_listener_channel)
+#if defined TIZEN_EXT
+			ifdata->tcp6_listener_watch =
+				g_io_add_watch(ifdata->tcp6_listener_channel,
+					G_IO_IN | G_IO_ERR | G_IO_HUP | G_IO_NVAL,
+					tcp6_listener_event, (gpointer)ifdata);
+#else
 			ifdata->tcp6_listener_watch =
 				g_io_add_watch(ifdata->tcp6_listener_channel,
 					G_IO_IN, tcp6_listener_event,
 					(gpointer)ifdata);
+#endif
 		else
 			ret |= TCP_IPv6_FAILED;
 	} else {
 		ifdata->udp4_listener_channel = get_listener(AF_INET, protocol,
 							ifdata->index);
 		if (ifdata->udp4_listener_channel)
+#if defined TIZEN_EXT
+			ifdata->udp4_listener_watch =
+				g_io_add_watch(ifdata->udp4_listener_channel,
+					G_IO_IN | G_IO_ERR | G_IO_HUP | G_IO_NVAL,
+					udp4_listener_event, (gpointer)ifdata);
+#else
 			ifdata->udp4_listener_watch =
 				g_io_add_watch(ifdata->udp4_listener_channel,
 					G_IO_IN, udp4_listener_event,
 					(gpointer)ifdata);
+#endif
 		else
 			ret |= UDP_IPv4_FAILED;
 
 		ifdata->udp6_listener_channel = get_listener(AF_INET6, protocol,
 							ifdata->index);
 		if (ifdata->udp6_listener_channel)
+#if defined TIZEN_EXT
+			ifdata->udp6_listener_watch =
+				g_io_add_watch(ifdata->udp6_listener_channel,
+					G_IO_IN | G_IO_ERR | G_IO_HUP | G_IO_NVAL,
+					udp6_listener_event, (gpointer)ifdata);
+#else
 			ifdata->udp6_listener_watch =
 				g_io_add_watch(ifdata->udp6_listener_channel,
 					G_IO_IN, udp6_listener_event,
 					(gpointer)ifdata);
+#endif
 		else
 			ret |= UDP_IPv6_FAILED;
 	}
