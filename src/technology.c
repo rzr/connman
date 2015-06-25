@@ -1549,12 +1549,13 @@ int __connman_technology_enabled(enum connman_service_type type)
 	DBG("technology %p type %s rfkill %d enabled %d", technology,
 		get_name(type), technology->rfkill_driven,
 		technology->enabled);
-
+#if !defined TIZEN_EXT
 	if (technology->rfkill_driven) {
 		if (technology->tethering_persistent)
 			enable_tethering(technology);
 		return 0;
 	}
+#endif
 
 	return technology_enabled(technology);
 }
@@ -1567,10 +1568,10 @@ int __connman_technology_disabled(enum connman_service_type type)
 	technology = technology_find(type);
 	if (!technology)
 		return -ENXIO;
-
+#if !defined TIZEN_EXT
 	if (technology->rfkill_driven)
 		return 0;
-
+#endif
 	for (list = technology->device_list; list; list = list->next) {
 		struct connman_device *device = list->data;
 
@@ -1756,11 +1757,12 @@ done:
 
 	technology->rfkill_driven = true;
 
+#if !defined TIZEN_EXT
 	/* If hardblocked, there is no need to handle softblocked state */
 	if (technology_apply_rfkill_change(technology,
 				softblock, hardblock, true))
 		return 0;
-
+#endif
 	if (global_offlinemode)
 		return 0;
 
