@@ -140,6 +140,18 @@ struct connman_service {
 	bool hidden_service;
 	char *config_file;
 	char *config_entry;
+#if defined TIZEN_EXT
+	/*
+	 * Description: TIZEN implements system global connection management.
+	 *              It's only for PDP (cellular) bearer. Wi-Fi is managed
+	 *		by ConnMan automatically. Reference count can help to
+	 *		manage open/close connection requests by each application.
+	 */
+	int user_pdn_connection_refcount;
+#endif
+#if defined TIZEN_TV_EXT
+	enum connman_dnsconfig_method dns_config_method;
+#endif
 };
 
 static bool allow_property_changed(struct connman_service *service);
@@ -154,6 +166,50 @@ struct find_data {
 	const char *path;
 	struct connman_service *service;
 };
+
+#if defined TIZEN_EXT
+/*
+ * Public APIs to use user_pdn_connection_refcount
+ */
+void connman_service_user_pdn_connection_ref(struct connman_service *service)
+{
+	__sync_fetch_and_add(&service->user_pdn_connection_refcount, 1);
+
+	DBG("User made PDN connection referenced: %d",
+				service->user_pdn_connection_refcount);
+}
+
+gboolean connman_service_user_pdn_connection_unref_and_test(
+					struct connman_service *service)
+{
+	__sync_synchronize();
+
+	DBG("User made PDN connection referenced: %d, which will be decreased",
+				service->user_pdn_connection_refcount);
+
+	if (service->user_pdn_connection_refcount < 1)
+		return TRUE;
+
+	if (__sync_sub_and_fetch(&service->user_pdn_connection_refcount, 1) == 0)
+		return TRUE;
+
+	return FALSE;
+}
+
+gboolean connman_service_is_no_ref_user_pdn_connection(
+					struct connman_service *cellular)
+{
+	if (cellular == NULL)
+		return TRUE;
+
+	__sync_synchronize();
+	if (cellular->type == CONNMAN_SERVICE_TYPE_CELLULAR &&
+			cellular->user_pdn_connection_refcount == 0)
+		return TRUE;
+
+	return FALSE;
+}
+#endif
 
 static void compare_path(gpointer value, gpointer user_data)
 {
@@ -1518,6 +1574,71 @@ static void reset_stats(struct connman_service *service)
 	g_timer_reset(service->stats_roaming.timer);
 }
 
+#if defined TIZEN_EXT
+static gboolean __connman_service_is_internet_profile(
+		struct connman_service *cellular)
+{
+	const char internet_suffix[] = "_1";
+
+	DBG("Service path: %s", cellular->path);
+
+	if (g_str_has_suffix(cellular->path, internet_suffix) == TRUE)
+		return TRUE;
+
+	return FALSE;
+}
+
+static gboolean __connman_service_is_tethering_profile(
+		struct connman_service *cellular)
+{
+	const char tethering_suffix[] = "_5";
+
+	DBG("Service path: %s", cellular->path);
+
+	if (g_str_has_suffix(cellular->path, tethering_suffix) == TRUE)
+		return TRUE;
+
+	return FALSE;
+}
+
+struct connman_service *connman_service_get_default_connection(void)
+{
+	GList *list;
+	struct connman_service *service;
+	struct connman_service *default_service = NULL;
+
+	for (list = service_list; list; list = list->next) {
+		service = list->data;
+
+		DBG("service: %p %s %s %s", service, service->name,
+				state2string(service->state),
+				__connman_service_type2string(service->type));
+
+		if (service->type == CONNMAN_SERVICE_TYPE_WIFI &&
+				is_connected(service) == TRUE) {
+			return service;
+		} else if (service->type == CONNMAN_SERVICE_TYPE_CELLULAR &&
+				__connman_service_is_internet_profile(service) == TRUE) {
+			if (default_service == NULL)
+				default_service = service;
+			else if (is_connected(service) == TRUE &&
+					is_connected(default_service) == FALSE)
+				default_service = service;
+		} else if (service->type == CONNMAN_SERVICE_TYPE_ETHERNET &&
+				is_connected(service) == TRUE) {
+			if (default_service == NULL)
+				default_service = service;
+		} else if (service->type == CONNMAN_SERVICE_TYPE_BLUETOOTH &&
+				is_connected(service) == TRUE) {
+			if (default_service == NULL)
+				default_service = service;
+		}
+	}
+
+	return default_service;
+}
+#endif
+
 struct connman_service *__connman_service_get_default(void)
 {
 	struct connman_service *service;
@@ -2710,6 +2831,54 @@ char **connman_service_get_timeservers(struct connman_service *service)
 	return service->timeservers;
 }
 
+#if defined TIZEN_EXT
+/*
+ * Description: Telephony plug-in requires manual PROXY setting function
+ */
+int connman_service_set_proxy(struct connman_service *service,
+					const char *proxy, gboolean active)
+{
+	char **proxies_array = NULL;
+
+	if (service == NULL)
+		return -EINVAL;
+
+	switch (service->type) {
+	case CONNMAN_SERVICE_TYPE_CELLULAR:
+	case CONNMAN_SERVICE_TYPE_ETHERNET:
+	case CONNMAN_SERVICE_TYPE_WIFI:
+		break;
+
+	default:
+		return -EINVAL;
+	}
+
+	g_strfreev(service->proxies);
+	service->proxies = NULL;
+
+	if (proxy != NULL)
+		proxies_array = g_strsplit(proxy, " ", 0);
+
+	service->proxies = proxies_array;
+
+	if (proxy == NULL) {
+		service->proxy_config = CONNMAN_SERVICE_PROXY_METHOD_DIRECT;
+		DBG("proxy changed (%d)", active);
+	} else {
+		service->proxy_config = CONNMAN_SERVICE_PROXY_METHOD_MANUAL;
+		DBG("proxy chagned %s (%d)", proxy, active);
+	}
+
+	if (active == TRUE) {
+		proxy_changed(service);
+
+		__connman_notifier_proxy_changed(service);
+	}
+
+	return 0;
+}
+#endif
+
 void connman_service_set_proxy_method(struct connman_service *service,
 					enum connman_service_proxy_method method)
 {
@@ -3816,6 +3985,14 @@ static GList *preferred_tech_list_get(void)
 					CONNMAN_SERVICE_CONNECT_REASON_USER) {
 				DBG("service %p name %s is user connected",
 						service, service->name);
+#if defined TIZEN_EXT
+				/* We can connect to a favorite service like
+				 * wifi even we have a userconnect for cellular
+				 * because we have refount for cellular service
+				 */
+				if (service->type == CONNMAN_SERVICE_TYPE_CELLULAR)
+					break;
+#endif
 				return NULL;
 			}
 		}
@@ -4132,6 +4309,14 @@ static DBusMessage *connect_service(DBusConnection *conn,
 
 	DBG("service %p", service);
 
+#if defined TIZEN_EXT
+	/*
+	 * Description: TIZEN implements system global connection management.
+	 */
+	if (service->type == CONNMAN_SERVICE_TYPE_CELLULAR)
+		connman_service_user_pdn_connection_ref(service);
+#endif
+
 	if (service->pending)
 		return __connman_error_in_progress(msg);
 
@@ -4165,6 +4350,10 @@ static DBusMessage *connect_service(DBusConnection *conn,
 	for (list = service_list; list; list = list->next) {
 		struct connman_service *temp = list->data;
 
+#if defined TIZEN_EXT
+		if (service->type == CONNMAN_SERVICE_TYPE_CELLULAR)
+			break;
+#endif
 		if (!is_connecting(temp) && !is_connected(temp))
 			break;
 
@@ -4210,6 +4399,20 @@ static DBusMessage *disconnect_service(DBusConnection *conn,
 	int err;
 
 	DBG("service %p", service);
+
+#if defined TIZEN_EXT
+	/*
+	 * Description: TIZEN implements system global connection management.
+	 */
+	if (service->type == CONNMAN_SERVICE_TYPE_CELLULAR) {
+		if (connman_service_user_pdn_connection_unref_and_test(service) != TRUE)
+			return __connman_error_failed(msg, EISCONN);
+
+		if (is_connected(service) == TRUE &&
+				service == connman_service_get_default_connection())
+			return __connman_error_failed(msg, EISCONN);
+	}
+#endif
 
 	if (service->type == CONNMAN_SERVICE_TYPE_WIFI) {
 		uid_t uid;
@@ -4819,6 +5022,13 @@ static void service_initialize(struct connman_service *service)
 	service->provider = NULL;
 
 	service->wps = false;
+#if defined TIZEN_EXT
+	/*
+	 * Description: TIZEN implements system global connection management.
+	 */
+	service->user_pdn_connection_refcount = 0;
+	__sync_synchronize();
+#endif
 }
 
 /**
@@ -5161,6 +5371,46 @@ void __connman_service_mark_dirty(void)
 	services_dirty = true;
 }
 
+#if defined TIZEN_EXT
+/**
+  * Returns profile count if there is any connected profiles
+  * that use same interface
+  */
+int __connman_service_get_connected_count_of_iface(
+					struct connman_service *service)
+{
+	GList *list;
+	int count = 0;
+	int index1 = 0;
+	int index2 = 0;
+
+	DBG("");
+
+	index1 = __connman_service_get_index(service);
+
+	if (index1 <= 0)
+		return 0;
+
+	for (list = service_list; list; list = list->next) {
+		struct connman_service *service2 = list->data;
+
+		if (service == service2)
+			continue;
+
+		index2 = __connman_service_get_index(service2);
+
+		if (is_connected(service2) && index2 > 0 && index1 == index2)
+			count++;
+
+		index2 = 0;
+	}
+
+	DBG("Interface index %d, count %d", index1, count);
+
+	return count;
+}
+#endif
+
 /**
  * __connman_service_set_favorite_delayed:
  * @service: service structure
@@ -5173,6 +5423,10 @@ int __connman_service_set_favorite_delayed(struct connman_service *service,
 					bool favorite,
 					bool delay_ordering)
 {
+#if defined TIZEN_EXT
+	if (service->type == CONNMAN_SERVICE_TYPE_CELLULAR)
+		return -EIO;
+#endif
 	if (service->hidden)
 		return -EOPNOTSUPP;
 
@@ -5512,6 +5766,126 @@ static int service_update_preferred_order(struct connman_service *default_servic
 	return -EALREADY;
 }
 
+#if defined TIZEN_EXT
+static gboolean __connman_service_can_drop(struct connman_service *service)
+{
+	if (is_connected(service) == TRUE || is_connecting(service) == TRUE) {
+		if (service->type != CONNMAN_SERVICE_TYPE_CELLULAR)
+			return TRUE;
+		else if (connman_service_is_no_ref_user_pdn_connection(service) == TRUE)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+static struct connman_device *default_connecting_device = NULL;
+
+static void __connman_service_disconnect_default(struct connman_service *service)
+{
+	struct connman_device *default_device = NULL;
+
+	if (default_connecting_device == NULL)
+		return;
+
+	default_device = connman_network_get_device(
+			__connman_service_get_network(service));
+
+	DBG("Disconnecting service %p %s", service, service->path);
+	DBG("Disconnecting device %p %p %s",
+			default_connecting_device,
+			default_device,
+			connman_device_get_string(default_device, "Name"));
+
+	if (default_connecting_device == default_device)
+		default_connecting_device = NULL;
+}
+
+static void __connman_service_connect_default(struct connman_service *current)
+{
+	int err;
+	GList *list;
+	bool default_internet;
+	struct connman_service *service;
+	struct connman_service *default_service = NULL;
+	struct connman_device *default_device = NULL;
+
+	if (current->type == CONNMAN_SERVICE_TYPE_CELLULAR) {
+		switch (current->state) {
+		case CONNMAN_SERVICE_STATE_UNKNOWN:
+		case CONNMAN_SERVICE_STATE_ASSOCIATION:
+		case CONNMAN_SERVICE_STATE_CONFIGURATION:
+			return;
+		default:
+			break;
+		}
+
+		if (default_connecting_device &&
+				__connman_service_is_internet_profile(current) == TRUE) {
+			if (current->network == NULL)
+				return;
+
+			default_device = connman_network_get_device(current->network);
+			if (default_connecting_device == default_device) {
+				DBG("Cellular service[%s]  %p %s",
+						state2string(current->state), current, current->path);
+				DBG("Cellular device %p %p %s",
+						default_connecting_device, default_device,
+						connman_device_get_string(default_device, "Name"));
+
+				default_connecting_device = NULL;
+			}
+		}
+
+		return;
+	} else if (is_connected(current) == TRUE || is_connecting(current) == TRUE)
+		return;
+
+	/* Always-on: keep default cellular connection as possible */
+	for (list = service_list; list; list = list->next) {
+		service = list->data;
+
+		if (service->type != CONNMAN_SERVICE_TYPE_CELLULAR ||
+				__connman_service_is_internet_profile(service) != TRUE ||
+				service->network == NULL) {
+			continue;
+		}
+
+		default_internet =
+				connman_network_get_bool(service->network, "DefaultInternet");
+
+		DBG("service: %p %s %s %s (default: %d)", service, service->name,
+				__connman_service_type2string(service->type),
+				state2string(service->state), default_internet);
+
+		if (default_internet) {
+			default_service = service;
+			if (is_connected(default_service) == TRUE ||
+					is_connecting(default_service) == TRUE)
+				return;
+
+			default_device = connman_network_get_device(default_service->network);
+			if (default_connecting_device == default_device) {
+				DBG("Device is connecting (%p)", default_connecting_device);
+				return;
+			}
+
+			default_connecting_device = default_device;
+			default_service->connect_reason = CONNMAN_SERVICE_CONNECT_REASON_USER;
+
+			err = __connman_network_connect(default_service->network);
+			DBG("Connecting default service %p %s [%d]",
+					default_service, default_service->path, err);
+			DBG("Connecting device %p %s", default_connecting_device,
+					connman_device_get_string(default_connecting_device, "Name"));
+			if (err < 0 && err != -EINPROGRESS) {
+				default_connecting_device = NULL;
+			} else
+				break;
+		}
+	}
+}
+#endif
+
 static void single_connected_tech(struct connman_service *allowed)
 {
 	struct connman_service *service;
@@ -5523,12 +5897,16 @@ static void single_connected_tech(struct connman_service *allowed)
 	for (iter = service_list; iter; iter = iter->next) {
 		service = iter->data;
 
+#if defined TIZEN_EXT
+		if (service != allowed && service->type != allowed->type &&
+				__connman_service_can_drop(service) == TRUE)
+#else
 		if (!is_connected(service))
 			break;
 
 		if (service == allowed)
 			continue;
-
+#endif
 		services = g_slist_prepend(services, service);
 	}
 
@@ -5536,6 +5914,9 @@ static void single_connected_tech(struct connman_service *allowed)
 		service = list->data;
 
 		DBG("disconnecting %p %s", service, service->path);
+#if defined TIZEN_EXT
+		__connman_service_disconnect_default(service);
+#endif
 		__connman_service_disconnect(service);
 	}
 
@@ -5701,9 +6082,21 @@ static int service_indicate_state(struct connman_service *service)
 
 		__connman_wpad_stop(service);
 
+#if defined TIZEN_EXT
+		/**
+		  * Skip the functions if there is any connected profiles
+		  * that use same interface
+		  */
+		if (service->type != CONNMAN_SERVICE_TYPE_CELLULAR ||
+			__connman_service_get_connected_count_of_iface(
+							service) <= 0) {
+#endif
 		dns_changed(service);
 		domain_changed(service);
 		proxy_changed(service);
+#if defined TIZEN_EXT
+		}
+#endif
 
 		/*
 		 * Previous services which are connected and which states
@@ -5733,6 +6126,10 @@ static int service_indicate_state(struct connman_service *service)
 		set_error(service, CONNMAN_SERVICE_ERROR_UNKNOWN);
 
 	service_list_sort();
+
+#if defined TIZEN_EXT
+	__connman_service_connect_default(service);
+#endif
 
 	__connman_connection_update_gateway();
 
@@ -6017,6 +6414,18 @@ int __connman_service_ipconfig_indicate_state(struct connman_service *service,
 	if (*old_state == new_state)
 		return -EALREADY;
 
+#if defined TIZEN_EXT
+	__sync_synchronize();
+	if (service->user_pdn_connection_refcount > 0 &&
+			service->type == CONNMAN_SERVICE_TYPE_CELLULAR)
+		if (new_state == CONNMAN_SERVICE_STATE_FAILURE ||
+				new_state == CONNMAN_SERVICE_STATE_DISCONNECT ||
+				new_state == CONNMAN_SERVICE_STATE_IDLE) {
+			service->user_pdn_connection_refcount = 0;
+			__sync_synchronize();
+		}
+#endif
+
 	DBG("service %p (%s) old state %d (%s) new state %d (%s) type %d (%s)",
 		service, service ? service->identifier : NULL,
 		*old_state, state2string(*old_state),
@@ -6032,6 +6441,15 @@ int __connman_service_ipconfig_indicate_state(struct connman_service *service,
 		__connman_ipconfig_enable(ipconfig);
 		break;
 	case CONNMAN_SERVICE_STATE_READY:
+#if defined TIZEN_EXT
+		if (service->type == CONNMAN_SERVICE_TYPE_CELLULAR &&
+				__connman_service_is_internet_profile(service) != TRUE) {
+			if (type == CONNMAN_IPCONFIG_TYPE_IPV4)
+				service_rp_filter(service, TRUE);
+
+			break;
+		}
+#endif
 		if (type == CONNMAN_IPCONFIG_TYPE_IPV4) {
 			check_proxy_setup(service);
 			service_rp_filter(service, true);
@@ -6393,6 +6811,14 @@ int __connman_service_disconnect(struct connman_service *service)
 		__connman_ipconfig_set_proxy_autoconfig(service->ipconfig_ipv6,
 							NULL);
 
+#if defined TIZEN_EXT
+	/**
+	  * Skip the functions If there is any connected profiles
+	  * that use same interface
+	  */
+	if (service->type != CONNMAN_SERVICE_TYPE_CELLULAR ||
+		__connman_service_get_connected_count_of_iface(service) <= 0) {
+#endif
 	__connman_ipconfig_address_remove(service->ipconfig_ipv4);
 	settings_changed(service, service->ipconfig_ipv4);
 
@@ -6401,6 +6827,9 @@ int __connman_service_disconnect(struct connman_service *service)
 
 	__connman_ipconfig_disable(service->ipconfig_ipv4);
 	__connman_ipconfig_disable(service->ipconfig_ipv6);
+#if defined TIZEN_EXT
+	}
+#endif
 
 	__connman_stats_service_unregister(service);
 
@@ -6867,6 +7296,28 @@ unsigned int __connman_service_get_order(struct connman_service *service)
 	if (!service->favorite)
 		return 0;
 
+#if defined TIZEN_EXT
+	if (service->type == CONNMAN_SERVICE_TYPE_VPN &&
+			service->do_split_routing == FALSE)
+		order = 10;
+	else if (service->type == CONNMAN_SERVICE_TYPE_WIFI) {
+		if (service->order < 5)
+			order = 5;
+	} else if (service->type == CONNMAN_SERVICE_TYPE_ETHERNET)
+		order = 4;
+	else if (service->type == CONNMAN_SERVICE_TYPE_BLUETOOTH)
+		order = 3;
+	else if (service->type == CONNMAN_SERVICE_TYPE_CELLULAR &&
+			__connman_service_is_internet_profile(service) == TRUE)
+		order = 1;
+	else if (service->type == CONNMAN_SERVICE_TYPE_CELLULAR &&
+			__connman_service_is_tethering_profile(service) == TRUE)
+		order = 0;
+	else if (service->type == CONNMAN_SERVICE_TYPE_CELLULAR)
+		order = 0;
+	else
+		order = 2;
+#else
 	if (service == service_list->data)
 		order = 1;
 
@@ -6875,7 +7326,7 @@ unsigned int __connman_service_get_order(struct connman_service *service)
 		service->order = 10;
 		order = 10;
 	}
-
+#endif
 	DBG("service %p name %s order %d split %d", service, service->name,
 		order, service->do_split_routing);
 

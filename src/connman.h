@@ -395,7 +395,15 @@ enum connman_ipconfig_method __connman_ipconfig_get_method(
 int __connman_ipconfig_address_add(struct connman_ipconfig *ipconfig);
 int __connman_ipconfig_address_remove(struct connman_ipconfig *ipconfig);
 int __connman_ipconfig_address_unset(struct connman_ipconfig *ipconfig);
+#if defined TIZEN_EXT
+/*
+ * Description: __connman_service_lookup_from_index cannot find correct service
+ *              e.g. same interface or same APN of cellular profile
+ */
+int __connman_ipconfig_gateway_add(struct connman_ipconfig *ipconfig, struct connman_service *service);
+#else
 int __connman_ipconfig_gateway_add(struct connman_ipconfig *ipconfig);
+#endif
 void __connman_ipconfig_gateway_remove(struct connman_ipconfig *ipconfig);
 
 int __connman_ipconfig_set_proxy_autoconfig(struct connman_ipconfig *ipconfig,
@@ -757,6 +765,11 @@ void __connman_service_timeserver_changed(struct connman_service *service,
 void __connman_service_set_pac(struct connman_service *service,
 					const char *pac);
 #if defined TIZEN_EXT
+/*
+ * Returns profile count if there is any connected profiles
+ * that use same interface
+ */
+int __connman_service_get_connected_count_of_iface(struct connman_service *service);
 void __connman_service_set_proxy(struct connman_service *service,
                                        const char *proxies);
 #endif

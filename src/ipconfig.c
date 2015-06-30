@@ -1077,16 +1077,24 @@ void __connman_ipconfig_set_gateway(struct connman_ipconfig *ipconfig,
 	ipconfig->address->gateway = g_strdup(gateway);
 }
 
+#if defined TIZEN_EXT
+int __connman_ipconfig_gateway_add(struct connman_ipconfig *ipconfig, struct connman_service *service)
+#else
 int __connman_ipconfig_gateway_add(struct connman_ipconfig *ipconfig)
+#endif
 {
+#if !defined TIZEN_EXT
 	struct connman_service *service;
+#endif
 
 	DBG("");
 
 	if (!ipconfig->address)
 		return -EINVAL;
 
+#if !defined TIZEN_EXT
 	service = __connman_service_lookup_from_index(ipconfig->index);
+#endif
 	if (!service)
 		return -EINVAL;
 

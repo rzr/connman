@@ -99,6 +99,11 @@ struct connman_network {
 #endif
 	} wifi;
 
+#if defined TIZEN_EXT
+	/* Multiple APN services and a default APN which a user selected */
+	bool default_internet;
+#endif
+
 };
 
 static const char *type2string(enum connman_network_type type)
@@ -178,7 +183,11 @@ static void dhcp_success(struct connman_network *network)
 	if (err < 0)
 		goto err;
 
+#if defined TIZEN_EXT
+	err = __connman_ipconfig_gateway_add(ipconfig_ipv4, service);
+#else
 	err = __connman_ipconfig_gateway_add(ipconfig_ipv4);
+#endif
 	if (err < 0)
 		goto err;
 
@@ -244,7 +253,12 @@ static int set_connected_fixed(struct connman_network *network)
 	if (err < 0)
 		goto err;
 
+#if defined TIZEN_EXT
+	err = __connman_ipconfig_gateway_add(ipconfig_ipv4, service);
+#else
 	err = __connman_ipconfig_gateway_add(ipconfig_ipv4);
+#endif
+
 	if (err < 0)
 		goto err;
 
@@ -278,7 +292,11 @@ static void set_connected_manual(struct connman_network *network)
 	if (err < 0)
 		goto err;
 
+#if defined TIZEN_EXT
+	err = __connman_ipconfig_gateway_add(ipconfig, service);
+#else
 	err = __connman_ipconfig_gateway_add(ipconfig);
+#endif
 	if (err < 0)
 		goto err;
 
@@ -341,7 +359,11 @@ static int manual_ipv6_set(struct connman_network *network,
 		return err;
 	}
 
+#if defined TIZEN_EXT
+	err = __connman_ipconfig_gateway_add(ipconfig_ipv6, service);
+#else
 	err = __connman_ipconfig_gateway_add(ipconfig_ipv6);
+#endif
 	if (err < 0)
 		return err;
 
@@ -405,7 +427,11 @@ static int dhcpv6_set_addresses(struct connman_network *network)
 	if (err < 0)
 		goto err;
 
+#if defined TIZEN_EXT
+	err = __connman_ipconfig_gateway_add(ipconfig_ipv6, service);
+#else
 	err = __connman_ipconfig_gateway_add(ipconfig_ipv6);
+#endif
 	if (err < 0)
 		goto err;
 
@@ -792,12 +818,22 @@ static void set_disconnected(struct connman_network *network)
 					CONNMAN_IPCONFIG_TYPE_IPV6);
 
 	if (network->connected) {
+#if defined TIZEN_EXT
+		/**
+		 * Do not remove gateway and its address,
+		 * if there are connected profiles that use same interface (multiple PDN)
+		 */
+		if (connman_service_get_type(service) != CONNMAN_SERVICE_TYPE_CELLULAR ||
+				__connman_service_get_connected_count_of_iface(service) <= 0) {
+#endif
 		__connman_connection_gateway_remove(service,
 						CONNMAN_IPCONFIG_TYPE_ALL);
 
 		__connman_ipconfig_address_unset(ipconfig_ipv4);
 		__connman_ipconfig_address_unset(ipconfig_ipv6);
-
+#if defined TIZEN_EXT
+		}
+#endif
 		/*
 		 * Special handling for IPv6 autoconfigured address.
 		 * The simplest way to remove autoconfigured routes is to
@@ -1299,6 +1335,93 @@ bool connman_network_get_available(struct connman_network *network)
 	return network->available;
 }
 
+#if defined TIZEN_EXT
+void connman_network_clear_associating(struct connman_network *network)
+{
+	struct connman_service *service;
+	enum connman_service_state state;
+
+	DBG("network %p", network);
+
+	network->connecting = FALSE;
+	network->associating = FALSE;
+
+	service = connman_service_lookup_from_network(network);
+	if (!service)
+		return;
+
+	state = __connman_service_ipconfig_get_state(service,
+						CONNMAN_IPCONFIG_TYPE_IPV4);
+	if (state != CONNMAN_SERVICE_STATE_IDLE &&
+			state != CONNMAN_SERVICE_STATE_FAILURE)
+		__connman_service_ipconfig_indicate_state(service,
+					CONNMAN_SERVICE_STATE_DISCONNECT,
+					CONNMAN_IPCONFIG_TYPE_IPV4);
+
+	state = __connman_service_ipconfig_get_state(service,
+						CONNMAN_IPCONFIG_TYPE_IPV6);
+	if (state != CONNMAN_SERVICE_STATE_IDLE &&
+				state != CONNMAN_SERVICE_STATE_FAILURE)
+		__connman_service_ipconfig_indicate_state(service,
+					CONNMAN_SERVICE_STATE_DISCONNECT,
+					CONNMAN_IPCONFIG_TYPE_IPV6);
+
+	__connman_service_ipconfig_indicate_state(service,
+						CONNMAN_SERVICE_STATE_IDLE,
+						CONNMAN_IPCONFIG_TYPE_IPV4);
+
+	__connman_service_ipconfig_indicate_state(service,
+						CONNMAN_SERVICE_STATE_IDLE,
+						CONNMAN_IPCONFIG_TYPE_IPV6);
+}
+
+static gboolean __connman_network_clear_associating_delayed(gpointer user_data)
+{
+	GSList *list;
+	gboolean found = FALSE;
+	enum connman_service_state state_ipv4;
+	enum connman_service_state state_ipv6;
+	struct connman_service *service;
+	struct connman_network *network = (struct connman_network *)user_data;
+
+	for (list = network_list; list != NULL; list = list->next) {
+		struct connman_network *item = list->data;
+
+		if (item == network) {
+			found = TRUE;
+			break;
+		}
+	}
+
+	if (found != TRUE)
+		return FALSE;
+
+	DBG("network %p name %s", network, network->name);
+	service = connman_service_lookup_from_network(network);
+
+	state_ipv4 = __connman_service_ipconfig_get_state(service,
+						CONNMAN_IPCONFIG_TYPE_IPV4);
+	state_ipv6 = __connman_service_ipconfig_get_state(service,
+						CONNMAN_IPCONFIG_TYPE_IPV6);
+
+	DBG("service %p state %d/%d", service, state_ipv4, state_ipv6);
+
+	if (network->associating == FALSE &&
+			state_ipv4 == CONNMAN_SERVICE_STATE_ASSOCIATION &&
+			state_ipv6 == CONNMAN_SERVICE_STATE_ASSOCIATION) {
+		__connman_service_ipconfig_indicate_state(service,
+							CONNMAN_SERVICE_STATE_IDLE,
+							CONNMAN_IPCONFIG_TYPE_IPV4);
+
+		__connman_service_ipconfig_indicate_state(service,
+							CONNMAN_SERVICE_STATE_IDLE,
+							CONNMAN_IPCONFIG_TYPE_IPV6);
+	}
+
+	return FALSE;
+}
+#endif
+
 /**
  * connman_network_set_associating:
  * @network: network structure
@@ -1568,13 +1691,19 @@ int __connman_network_connect(struct connman_network *network)
 
 	network->connecting = true;
 
+#if defined TIZEN_EXT
+	if (network->type != CONNMAN_NETWORK_TYPE_CELLULAR)
+#endif
 	__connman_device_disconnect(network->device);
 
 	err = network->driver->connect(network);
 	if (err < 0) {
-		if (err == -EINPROGRESS)
+		if (err == -EINPROGRESS) {
+#if defined TIZEN_EXT
+			if (network->type != CONNMAN_NETWORK_TYPE_CELLULAR)
+#endif
 			connman_network_set_associating(network, true);
-		else
+		} else
 			network->connecting = false;
 
 		return err;
@@ -1632,7 +1761,11 @@ static int manual_ipv4_set(struct connman_network *network,
 		return err;
 	}
 
+#if defined TIZEN_EXT
+	return __connman_ipconfig_gateway_add(ipconfig, service);
+#else
 	return __connman_ipconfig_gateway_add(ipconfig);
+#endif
 }
 
 int __connman_network_clear_ipconfig(struct connman_network *network,
@@ -2086,6 +2219,10 @@ int connman_network_set_bool(struct connman_network *network,
 		network->wifi.wps = value;
 	else if (g_strcmp0(key, "WiFi.UseWPS") == 0)
 		network->wifi.use_wps = value;
+#if defined TIZEN_EXT
+	else if (g_strcmp0(key, "DefaultInternet") == 0)
+		network->default_internet = value;
+#endif
 
 	return -EINVAL;
 }
@@ -2108,6 +2245,10 @@ bool connman_network_get_bool(struct connman_network *network,
 		return network->wifi.wps;
 	else if (g_str_equal(key, "WiFi.UseWPS"))
 		return network->wifi.use_wps;
+#if defined TIZEN_EXT
+	else if (g_str_equal(key, "DefaultInternet"))
+		return network->default_internet;
+#endif
 
 	return false;
 }
