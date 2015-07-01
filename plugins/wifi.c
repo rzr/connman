@@ -130,6 +130,10 @@ struct wifi_data {
 	int servicing;
 };
 
+#if defined TIZEN_EXT
+#include "connman.h"
+#endif
+
 static GList *iface_list = NULL;
 
 static GList *pending_wifi_device = NULL;
@@ -2078,7 +2082,30 @@ static int network_connect(struct connman_network *network)
 static void disconnect_callback(int result, GSupplicantInterface *interface,
 								void *user_data)
 {
+#if defined TIZEN_EXT
+	GList *list;
+	struct wifi_data *wifi;
+	struct connman_network *network = user_data;
+
+	DBG("network %p result %d", network, result);
+
+	for (list = iface_list; list; list = list->next) {
+		wifi = list->data;
+
+		if (wifi->network == NULL && wifi->disconnecting == true)
+			wifi->disconnecting = false;
+
+		if (wifi->network == network)
+			goto found;
+	}
+
+	/* wifi_data may be invalid because wifi is already disabled */
+	return;
+
+found:
+#else
 	struct wifi_data *wifi = user_data;
+#endif
 
 	DBG("result %d supplicant interface %p wifi %p",
 			result, interface, wifi);
@@ -2117,6 +2144,9 @@ static int network_disconnect(struct connman_network *network)
 	struct connman_device *device = connman_network_get_device(network);
 	struct wifi_data *wifi;
 	int err;
+#if defined TIZEN_EXT
+	struct connman_service *service;
+#endif
 
 	DBG("network %p", network);
 
@@ -2124,6 +2154,22 @@ static int network_disconnect(struct connman_network *network)
 	if (!wifi || !wifi->interface)
 		return -ENODEV;
 
+#if defined TIZEN_EXT
+	if (connman_network_get_associating(network) == true) {
+		connman_network_clear_associating(network);
+		connman_network_set_bool(network, "WiFi.UseWPS", false);
+	} else {
+		service = connman_service_lookup_from_network(network);
+
+		if (service != NULL &&
+			(__connman_service_is_connected_state(service,
+					CONNMAN_IPCONFIG_TYPE_IPV4) == false &&
+			__connman_service_is_connected_state(service,
+					CONNMAN_IPCONFIG_TYPE_IPV6) == false) &&
+			(connman_service_get_favorite(service) == false))
+					__connman_service_set_passphrase(service, NULL);
+	}
+#endif
 	connman_network_set_associating(network, false);
 
 	if (wifi->disconnecting)
@@ -2131,8 +2177,14 @@ static int network_disconnect(struct connman_network *network)
 
 	wifi->disconnecting = true;
 
+#if defined TIZEN_EXT
+	err = g_supplicant_interface_disconnect(wifi->interface,
+						disconnect_callback, network);
+#else
 	err = g_supplicant_interface_disconnect(wifi->interface,
 						disconnect_callback, wifi);
+#endif
+
 	if (err < 0)
 		wifi->disconnecting = false;
 
@@ -2254,8 +2306,16 @@ static bool handle_wps_completion(GSupplicantInterface *interface,
 		if (!wps_ssid || wps_ssid_len != ssid_len ||
 				memcmp(ssid, wps_ssid, ssid_len) != 0) {
 			connman_network_set_associating(network, false);
+#if defined TIZEN_EXT
+			g_supplicant_interface_disconnect(wifi->interface,
+						disconnect_callback, wifi->network);
+
+			connman_network_set_bool(network, "WiFi.UseWPS", false);
+			connman_network_set_string(network, "WiFi.PinWPS", NULL);
+#else
 			g_supplicant_interface_disconnect(wifi->interface,
 						disconnect_callback, wifi);
+#endif
 			return false;
 		}
 
