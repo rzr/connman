@@ -5562,6 +5562,21 @@ void __connman_service_update_search_domains(struct connman_service *service,
 	service->domains = g_strdupv(domains);
 }
 
+#if defined TIZEN_EXT
+void __connman_service_set_autoconnect(struct connman_service *service,
+						bool autoconnect)
+{
+	if (service == NULL)
+		return;
+
+	if (service->autoconnect != autoconnect) {
+		DBG("updated autoconnect flag (%d)", autoconnect);
+		service->autoconnect = autoconnect;
+		service_save(service);
+	}
+}
+#endif
+
 static void service_complete(struct connman_service *service)
 {
 	reply_pending(service, EIO);

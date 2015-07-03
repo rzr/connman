@@ -692,6 +692,10 @@ struct connman_network *__connman_service_get_network(struct connman_service *se
 enum connman_service_security __connman_service_get_security(struct connman_service *service);
 const char *__connman_service_get_phase2(struct connman_service *service);
 bool __connman_service_wps_enabled(struct connman_service *service);
+#if defined TIZEN_EXT
+void __connman_service_set_autoconnect(struct connman_service *service,
+						bool autoconnect);
+#endif
 int __connman_service_set_favorite(struct connman_service *service,
 						bool favorite);
 int __connman_service_set_favorite_delayed(struct connman_service *service,
