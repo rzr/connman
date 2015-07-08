@@ -149,9 +149,6 @@ struct connman_service {
 	 */
 	int user_pdn_connection_refcount;
 #endif
-#if defined TIZEN_TV_EXT
-	enum connman_dnsconfig_method dns_config_method;
-#endif
 };
 
 static bool allow_property_changed(struct connman_service *service);
